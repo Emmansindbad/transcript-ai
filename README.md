@@ -1,36 +1,67 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# M365 Transcript AI Analyzer
 
-## Getting Started
+Internal SindbadTech dashboard that reads Microsoft Teams meetings from Graph, then uses Gemini to produce ticket-shaped action items (Task vs Bug), a meeting summary, and optional email / Microsoft To Do export.
 
-First, run the development server:
+Times in the UI and ticket day-matching use **Arabia Standard Time (KSA, Asia/Riyadh)**.
+
+## What it does
+
+1. Lists recent calendar Teams meetings (last 30 days), with **Transcript** / **Recording** badges.
+2. Loads spoken transcript (VTT with timestamps), same-day meeting chat, and optional recording.
+3. Analyzes with Gemini **3.8 Flash**, then **3.6 Flash** if 3.8 is busy. Set `GEMINI_MODEL=gemini-3.1-pro-preview` to try Pro first.
+4. Lets you **edit tickets** before sending. Already-filed work is skipped by default.
+5. Emails `SUMMARY_EMAIL_RECIPIENT` (default `mom@sindbad.tech`) and/or creates Microsoft To Do tasks.
+6. Saves analyses under `data/analyzer-store.json` so refresh does not lose tickets.
+
+## Run locally
 
 ```bash
+npm install
+copy .env.example .env.local
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open http://localhost:3000. Click **Fetch Data**, pick a meeting, then **Generate Analysis**.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Azure / Graph setup
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+App-only **client credentials**. Never put secrets in `NEXT_PUBLIC_*`.
 
-## Learn More
+Required application permissions (admin consent):
 
-To learn more about Next.js, take a look at the following resources:
+- `Calendars.Read`
+- `OnlineMeetings.Read.All`
+- `OnlineMeetingTranscript.Read.All`
+- `OnlineMeetingRecording.Read.All`
+- `User.Read.All`
+- `Mail.Send`
+- `Chat.Read.All`
+- `ChatMessage.Read.All`
+- `Tasks.ReadWrite.All`
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Grant them with:
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```powershell
+.\scripts\grant-graph-permissions.ps1
+```
 
-## Deploy on Vercel
+Also required:
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+1. An **Application Access Policy** that allows this app to read online meetings for `TARGET_USER_ID` (and organizers you care about).
+2. Teams tenant setting **Graph access to transcripts** on:
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```powershell
+.\scripts\enable-graph-transcript-access.ps1
+```
+
+`TARGET_USER_ID` is the mailbox used as the email sender and the primary calendar identity.
+
+## Gemini
+
+Set `GEMINI_API_KEY` from [Google AI Studio](https://aistudio.google.com/apikey). Optional `GEMINI_MODEL` caps the fallback list.
+
+Recordings larger than **80 MB** are skipped so the Node process does not load the whole file into memory.
+
+## Health
+
+The header **Graph health** chips probe calendar, transcripts, recordings, chat, mail, and To Do. Expand them when Fetch Data looks empty.

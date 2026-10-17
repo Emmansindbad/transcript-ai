@@ -1,0 +1,23 @@
+# M365 Transcript AI Analyzer — Cursor Rules
+
+## TypeScript
+- Use strict TypeScript at all times. Never use `any`; prefer `unknown` with type guards when needed.
+- All exported functions in `src/lib/` must have explicit return types.
+- Define shared types in `src/types/` and reuse them across API routes and components.
+
+## Security
+- NEVER log, echo, or expose secrets: `AZURE_CLIENT_SECRET`, `GEMINI_API_KEY`, access tokens, or MSAL responses.
+- All credential access must stay server-side (`src/lib/`, `src/app/api/`). Never prefix secrets with `NEXT_PUBLIC_`.
+- Import `server-only` in library modules that handle credentials.
+
+## Architecture
+- Keep components modular and single-purpose under `src/components/`.
+- Business logic belongs in `src/lib/`; API routes should orchestrate, not contain heavy logic.
+- Use typed error classes for Graph and Gemini failures so the UI can show actionable messages.
+
+## Microsoft Graph
+- Use Client Credentials flow only (`@azure/msal-node`); do not mix in delegated auth.
+- Handle 403 (missing Application Access Policy), 404 (no transcript), and 429 (rate limit) gracefully.
+
+## Styling
+- Use Tailwind CSS utility classes. Keep the dashboard clean, modern, and responsive.

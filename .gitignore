@@ -32,6 +32,7 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
 
 # vercel
 .vercel
@@ -39,3 +40,12 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local analyzer persistence
+/data/analyzer-store.json
+/data/analyzer.pid
+/data/teams-user-cache.json
+/data/teams-user.json
+/data/teams-group-chats.json
+/data/meetings-cache.json
+/data/users-cache.json
