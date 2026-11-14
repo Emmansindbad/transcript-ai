@@ -35,3 +35,25 @@ export function getPmtApiToken(): string {
   }
   return token;
 }
+
+export function getSonarBaseUrl(): string {
+  const configured =
+    process.env.SONARQUBE_BASE_URL?.trim() || "https://code-review.sindbad.tech";
+  return configured.replace(/\/+$/, "");
+}
+
+export function getSonarUsername(): string {
+  const value = process.env.SONARQUBE_USERNAME?.trim() ?? "";
+  if (!value) {
+    throw new Error("Missing required environment variable: SONARQUBE_USERNAME");
+  }
+  return value;
+}
+
+export function getSonarPassword(): string {
+  const value = process.env.SONARQUBE_PASSWORD?.trim() ?? "";
+  if (!value) {
+    throw new Error("Missing required environment variable: SONARQUBE_PASSWORD");
+  }
+  return value;
+}

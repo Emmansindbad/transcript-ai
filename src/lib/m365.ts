@@ -11,6 +11,12 @@ import type {
   TenantUser,
   TranscriptInfo,
 } from "@/types/meeting";
+import {
+  formatChatSourceLinks,
+  isImageAttachmentName,
+  isSafeHttpUrl,
+  toTeamsMessagePermalink,
+} from "@/lib/chat-links";
 import { getEnvVar } from "@/lib/env";
 import { GraphError } from "@/lib/errors";
 import {
@@ -20,7 +26,7 @@ import {
 } from "@/lib/ksa-time";
 import { meetingListCacheKey } from "@/lib/meeting-key";
 
-export const MAX_RECORDING_BYTES = 80 * 1024 * 1024;
+export const MAX_RECORDING_BYTES = 150 * 1024 * 1024;
 const MEETING_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 const USER_CACHE_TTL_MS = 10 * 60 * 1000;
 const USER_DISK_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
@@ -55,6 +61,7 @@ interface GraphUser {
   mail?: string;
   accountEnabled?: boolean;
   userType?: string;
+  assignedLicenses?: Array<{ skuId?: string }>;
 }
 
 interface GraphUsersResponse {
@@ -78,9 +85,18 @@ interface GraphCalendarViewResponse {
 
 interface GraphOnlineMeeting {
   id?: string;
+  subject?: string;
+  joinWebUrl?: string;
   chatInfo?: {
     threadId?: string;
   };
+}
+
+interface GraphChatAttachment {
+  id?: string;
+  contentType?: string;
+  contentUrl?: string;
+  name?: string;
 }
 
 interface GraphChatMessage {
@@ -88,6 +104,7 @@ interface GraphChatMessage {
   createdDateTime?: string;
   messageType?: string;
   deletedDateTime?: string;
+  webUrl?: string;
   body?: {
     content?: string;
     contentType?: string;
@@ -97,6 +114,7 @@ interface GraphChatMessage {
       displayName?: string;
     };
   };
+  attachments?: GraphChatAttachment[];
 }
 
 interface GraphChatMessagesResponse {
@@ -124,17 +142,26 @@ interface GraphTranscriptsResponse {
   "@odata.nextLink"?: string;
 }
 
+interface GraphCallRecording {
+  id?: string;
+  meetingId?: string;
+  callId?: string;
+  createdDateTime?: string;
+  endDateTime?: string;
+  recordingContentUrl?: string;
+}
+
 interface GraphRecordingsResponse {
-  value?: Array<{
-    id?: string;
-    createdDateTime?: string;
-  }>;
+  value?: GraphCallRecording[];
   "@odata.nextLink"?: string;
 }
 
 export interface RecordingInfo {
   id: string;
   createdDateTime: string;
+  endDateTime?: string;
+  meetingId?: string;
+  recordingContentUrl?: string;
 }
 
 export interface RecordingContent {
@@ -150,6 +177,11 @@ interface GraphCallTranscript {
 
 interface GraphGetAllTranscriptsResponse {
   value?: GraphCallTranscript[];
+  "@odata.nextLink"?: string;
+}
+
+interface GraphGetAllRecordingsResponse {
+  value?: GraphCallRecording[];
   "@odata.nextLink"?: string;
 }
 
@@ -217,6 +249,71 @@ export function pickArtifactForOccurrence<T extends { createdDateTime: string }>
       Math.abs(leftTime - start.getTime()) - Math.abs(rightTime - start.getTime())
     );
   })[0] ?? null;
+}
+
+function toRecordingInfo(item: GraphCallRecording): RecordingInfo | null {
+  if (!item.id) {
+    return null;
+  }
+
+  return {
+    id: item.id,
+    createdDateTime: item.createdDateTime ?? "",
+    endDateTime: item.endDateTime,
+    meetingId: item.meetingId,
+    recordingContentUrl: item.recordingContentUrl,
+  };
+}
+
+function isRedirectStatus(status: number): boolean {
+  return (
+    status === 301 ||
+    status === 302 ||
+    status === 303 ||
+    status === 307 ||
+    status === 308
+  );
+}
+
+function shouldSendGraphToken(url: string): boolean {
+  try {
+    return new URL(url).hostname.toLowerCase() === "graph.microsoft.com";
+  } catch {
+    return false;
+  }
+}
+
+async function fetchRecordingResponse(
+  url: string,
+  token: string,
+): Promise<Response> {
+  let currentUrl = url;
+
+  for (let hop = 0; hop < 5; hop += 1) {
+    const response = await fetch(currentUrl, {
+      headers: shouldSendGraphToken(currentUrl)
+        ? { Authorization: `Bearer ${token}` }
+        : {},
+      redirect: "manual",
+    });
+
+    if (!isRedirectStatus(response.status)) {
+      return response;
+    }
+
+    const location = response.headers.get("location");
+    if (!location) {
+      return response;
+    }
+
+    currentUrl = new URL(location, currentUrl).toString();
+  }
+
+  throw new GraphError(
+    "Too many redirects while downloading the meeting recording.",
+    502,
+    "GRAPH_ERROR",
+  );
 }
 
 let msalClient: ConfidentialClientApplication | null = null;
@@ -551,29 +648,26 @@ function setCachedMeetingList(
   return result;
 }
 
-async function annotateRecordingAvailability(
-  meetings: MeetingSummary[],
-): Promise<MeetingSummary[]> {
-  return mapWithConcurrency(meetings, 4, async (meeting) => {
-    try {
-      const meetingId =
-        meeting.onlineMeetingId ??
-        (await resolveOnlineMeetingId(meeting.organizerId, meeting.joinUrl));
-      const recordings = await listRecordings(meeting.organizerId, meetingId);
-      const match = pickArtifactForOccurrence(
-        recordings,
-        meeting.start,
-        meeting.end,
-      );
-      return {
-        ...meeting,
-        onlineMeetingId: meetingId,
-        hasRecording: Boolean(match),
-      };
-    } catch {
-      return { ...meeting, hasRecording: false };
+async function getOnlineMeetingDetails(
+  organizerId: string,
+  meetingId: string,
+): Promise<{ subject: string; joinUrl: string } | null> {
+  const client = getGraphClient();
+  try {
+    const meeting = (await client
+      .api(`/users/${organizerId}/onlineMeetings/${meetingId}`)
+      .select("id,subject,joinWebUrl")
+      .get()) as GraphOnlineMeeting;
+    if (!meeting.joinWebUrl) {
+      return null;
     }
-  });
+    return {
+      subject: meeting.subject?.trim() || "Recorded meeting",
+      joinUrl: meeting.joinWebUrl,
+    };
+  } catch {
+    return null;
+  }
 }
 
 function isTenantUser(value: unknown): value is TenantUser {
@@ -591,17 +685,20 @@ function isTenantUser(value: unknown): value is TenantUser {
   );
 }
 
-function readTenantUsersDiskCache(): TenantUser[] | null {
+function readTenantUsersDiskCache(allowStale = false): TenantUser[] | null {
   try {
     const parsed = JSON.parse(readFileSync(USER_CACHE_PATH, "utf8")) as {
       version?: unknown;
       savedAt?: unknown;
       users?: unknown;
     };
+    const stale =
+      typeof parsed.savedAt !== "number" ||
+      parsed.savedAt + USER_DISK_CACHE_TTL_MS <= Date.now();
     if (
       parsed.version !== USER_CACHE_VERSION ||
       typeof parsed.savedAt !== "number" ||
-      parsed.savedAt + USER_DISK_CACHE_TTL_MS <= Date.now() ||
+      (!allowStale && stale) ||
       !Array.isArray(parsed.users)
     ) {
       return null;
@@ -635,16 +732,9 @@ function rememberTenantUsers(users: TenantUser[]): TenantUser[] {
   return users;
 }
 
-export async function listTenantUsers(): Promise<TenantUser[]> {
-  if (tenantUsersCache && tenantUsersCache.expiresAt > Date.now()) {
-    return tenantUsersCache.value;
-  }
+let tenantUsersRefresh: Promise<TenantUser[]> | null = null;
 
-  const cachedUsers = readTenantUsersDiskCache();
-  if (cachedUsers) {
-    return rememberTenantUsers(cachedUsers);
-  }
-
+async function refreshTenantUsersFromGraph(): Promise<TenantUser[]> {
   const client = getGraphClient();
   const collected: GraphUser[] = [];
 
@@ -670,7 +760,10 @@ export async function listTenantUsers(): Promise<TenantUser[]> {
         : "";
     }
   } catch {
-    // Fall back to configured target user when User.Read.All is unavailable.
+    const stale = readTenantUsersDiskCache(true);
+    if (stale) {
+      return rememberTenantUsers(stale);
+    }
   }
 
   let users: TenantUser[] = collected
@@ -704,6 +797,84 @@ export async function listTenantUsers(): Promise<TenantUser[]> {
 
   writeTenantUsersDiskCache(users);
   return rememberTenantUsers(users);
+}
+
+export async function listTenantUsers(): Promise<TenantUser[]> {
+  if (tenantUsersCache && tenantUsersCache.expiresAt > Date.now()) {
+    return tenantUsersCache.value;
+  }
+
+  const cachedUsers = readTenantUsersDiskCache();
+  if (cachedUsers) {
+    return rememberTenantUsers(cachedUsers);
+  }
+
+  const staleUsers = readTenantUsersDiskCache(true);
+  if (staleUsers) {
+    if (!tenantUsersRefresh) {
+      tenantUsersRefresh = refreshTenantUsersFromGraph().finally(() => {
+        tenantUsersRefresh = null;
+      });
+    }
+    return rememberTenantUsers(staleUsers);
+  }
+
+  if (!tenantUsersRefresh) {
+    tenantUsersRefresh = refreshTenantUsersFromGraph().finally(() => {
+      tenantUsersRefresh = null;
+    });
+  }
+  return tenantUsersRefresh;
+}
+
+export async function listLicensedTenantUsers(): Promise<TenantUser[]> {
+  const client = getGraphClient();
+  const collected: GraphUser[] = [];
+
+  try {
+    let nextPath = "/users";
+    let firstPage = true;
+    while (nextPath) {
+      const response = (
+        firstPage
+          ? await client
+              .api(nextPath)
+              .select(
+                "id,displayName,userPrincipalName,mail,accountEnabled,userType,assignedLicenses",
+              )
+              .top(999)
+              .get()
+          : await client.api(nextPath).get()
+      ) as GraphUsersResponse;
+      firstPage = false;
+      collected.push(...(response.value ?? []));
+      nextPath = response["@odata.nextLink"]
+        ? toGraphApiPath(response["@odata.nextLink"])
+        : "";
+    }
+  } catch {
+    return listTenantUsers();
+  }
+
+  const licensed = collected
+    .filter(
+      (user): user is GraphUser & { id: string; userPrincipalName: string } =>
+        Boolean(user.id && user.userPrincipalName) &&
+        user.accountEnabled !== false &&
+        (user.userType ?? "Member") === "Member" &&
+        (user.assignedLicenses ?? []).length > 0,
+    )
+    .map((user) => ({
+      id: user.id,
+      displayName: user.displayName ?? user.userPrincipalName,
+      userPrincipalName: user.userPrincipalName,
+      ...(typeof user.mail === "string" && user.mail.includes("@")
+        ? { mail: user.mail }
+        : {}),
+    }))
+    .sort((left, right) => left.displayName.localeCompare(right.displayName));
+
+  return licensed.length > 0 ? licensed : listTenantUsers();
 }
 
 export async function getRecentMeetings(
@@ -806,9 +977,62 @@ async function getOrganizerTranscriptIndex(
   return index;
 }
 
-async function filterMeetingsWithTranscripts(
+async function getOrganizerRecordingIndex(
+  organizerId: string,
+  startDate: Date,
+  endDate: Date,
+): Promise<Map<string, RecordingInfo[]>> {
+  const client = getGraphClient();
+  const index = new Map<string, RecordingInfo[]>();
+  const startIso = startDate.toISOString();
+  const endIso = endDate.toISOString();
+  let nextPath =
+    `/users/${organizerId}/onlineMeetings/getAllRecordings(meetingOrganizerUserId='${organizerId}',startDateTime=${startIso},endDateTime=${endIso})`;
+
+  try {
+    while (nextPath) {
+      const response = (await client
+        .api(nextPath)
+        .get()) as GraphGetAllRecordingsResponse;
+
+      for (const item of response.value ?? []) {
+        const recording = toRecordingInfo(item);
+        if (!recording || !item.meetingId) {
+          continue;
+        }
+        const list = index.get(item.meetingId) ?? [];
+        list.push({ ...recording, meetingId: item.meetingId });
+        index.set(item.meetingId, list);
+      }
+
+      nextPath = response["@odata.nextLink"]
+        ? toGraphApiPath(response["@odata.nextLink"])
+        : "";
+    }
+  } catch {
+    return index;
+  }
+
+  return index;
+}
+
+function latestArtifact<T extends { createdDateTime: string }>(
+  artifacts: T[],
+): T | null {
+  if (artifacts.length === 0) {
+    return null;
+  }
+  return [...artifacts].sort((left, right) => {
+    const leftTime = parseGraphDate(left.createdDateTime)?.getTime() ?? 0;
+    const rightTime = parseGraphDate(right.createdDateTime)?.getTime() ?? 0;
+    return rightTime - leftTime;
+  })[0] ?? null;
+}
+
+async function enrichMeetingsWithArtifacts(
   meetings: MeetingSummary[],
   daysBack: number,
+  options?: { transcriptsDisabled?: boolean },
 ): Promise<MeetingSummary[]> {
   if (meetings.length === 0) {
     return [];
@@ -819,45 +1043,229 @@ async function filterMeetingsWithTranscripts(
   startDate.setDate(startDate.getDate() - daysBack);
 
   const organizerIds = [...new Set(meetings.map((meeting) => meeting.organizerId))];
-  const indexByOrganizer = new Map<string, Map<string, TranscriptInfo[]>>();
+  const transcriptsByOrganizer = new Map<string, Map<string, TranscriptInfo[]>>();
+  const recordingsByOrganizer = new Map<string, Map<string, RecordingInfo[]>>();
+  const meetingIdByJoinUrl = new Map<string, string>();
 
-  const organizerIndexes = await mapWithConcurrency(organizerIds, 3, async (organizerId) => {
-    const index = await getOrganizerTranscriptIndex(organizerId, startDate, endDate);
-    return { organizerId, index };
-  });
+  const [transcriptIndexes, recordingIndexes] = await Promise.all([
+    options?.transcriptsDisabled
+      ? Promise.resolve([] as Array<{ organizerId: string; index: Map<string, TranscriptInfo[]> }>)
+      : mapWithConcurrency(organizerIds, 3, async (organizerId) => {
+          try {
+            const index = await getOrganizerTranscriptIndex(
+              organizerId,
+              startDate,
+              endDate,
+            );
+            return { organizerId, index };
+          } catch (error) {
+            if (error instanceof GraphError && error.code === "TRANSCRIPTS_DISABLED") {
+              throw error;
+            }
+            return {
+              organizerId,
+              index: new Map<string, TranscriptInfo[]>(),
+            };
+          }
+        }),
+    mapWithConcurrency(organizerIds, 3, async (organizerId) => {
+      const index = await getOrganizerRecordingIndex(
+        organizerId,
+        startDate,
+        endDate,
+      );
+      return { organizerId, index };
+    }),
+  ]);
 
-  for (const { organizerId, index } of organizerIndexes) {
-    indexByOrganizer.set(organizerId, index);
+  for (const { organizerId, index } of transcriptIndexes) {
+    transcriptsByOrganizer.set(organizerId, index);
+  }
+  for (const { organizerId, index } of recordingIndexes) {
+    recordingsByOrganizer.set(organizerId, index);
   }
 
-  return mapWithConcurrency(meetings, 5, async (meeting) => {
+  const usedTranscriptIds = new Set<string>();
+  const usedRecordingIds = new Set<string>();
+
+  const annotated = await mapWithConcurrency(meetings, 5, async (meeting) => {
     try {
-      const onlineMeetingId = await resolveOnlineMeetingId(
-        meeting.organizerId,
-        meeting.joinUrl,
-      );
-      const fromIndex =
-        indexByOrganizer.get(meeting.organizerId)?.get(onlineMeetingId) ?? [];
-      const artifacts =
-        fromIndex.length > 0
-          ? fromIndex
+      const cachedId = meeting.onlineMeetingId ?? meetingIdByJoinUrl.get(meeting.joinUrl);
+      const onlineMeetingId =
+        cachedId ??
+        (await resolveOnlineMeetingId(meeting.organizerId, meeting.joinUrl));
+      meetingIdByJoinUrl.set(meeting.joinUrl, onlineMeetingId);
+
+      const transcriptIndex =
+        transcriptsByOrganizer.get(meeting.organizerId)?.get(onlineMeetingId) ?? [];
+      const recordingIndex =
+        recordingsByOrganizer.get(meeting.organizerId)?.get(onlineMeetingId) ?? [];
+
+      const transcripts =
+        transcriptIndex.length > 0 || options?.transcriptsDisabled
+          ? transcriptIndex
           : await listTranscripts(meeting.organizerId, onlineMeetingId);
-      const match = pickArtifactForOccurrence(
-        artifacts,
+      const recordings =
+        recordingIndex.length > 0
+          ? recordingIndex
+          : await listRecordings(meeting.organizerId, onlineMeetingId);
+
+      const transcriptMatch = pickArtifactForOccurrence(
+        transcripts,
+        meeting.start,
+        meeting.end,
+      );
+      const recordingMatch = pickArtifactForOccurrence(
+        recordings,
         meeting.start,
         meeting.end,
       );
 
+      if (transcriptMatch?.id) {
+        usedTranscriptIds.add(transcriptMatch.id);
+      }
+      if (recordingMatch?.id) {
+        usedRecordingIds.add(recordingMatch.id);
+      }
+
       return {
         ...meeting,
         onlineMeetingId,
-        latestTranscriptId: match?.id,
-        hasTranscript: Boolean(match),
+        latestTranscriptId: transcriptMatch?.id,
+        hasTranscript: Boolean(transcriptMatch),
+        hasRecording: Boolean(recordingMatch),
       };
     } catch {
-      return { ...meeting, hasTranscript: false };
+      return { ...meeting, hasTranscript: false, hasRecording: false };
     }
   });
+
+  const templateByMeetingId = new Map<string, MeetingSummary>();
+  for (const meeting of annotated) {
+    if (meeting.onlineMeetingId && !templateByMeetingId.has(meeting.onlineMeetingId)) {
+      templateByMeetingId.set(meeting.onlineMeetingId, meeting);
+    }
+  }
+
+  type UnmatchedGroup = {
+    organizerId: string;
+    meetingId: string;
+    day: string;
+    recordings: RecordingInfo[];
+    transcripts: TranscriptInfo[];
+  };
+  const unmatched = new Map<string, UnmatchedGroup>();
+
+  const addUnmatched = (
+    organizerId: string,
+    meetingId: string,
+    createdDateTime: string,
+    kind: "recording" | "transcript",
+    recording?: RecordingInfo,
+    transcript?: TranscriptInfo,
+  ): void => {
+    const day = getKsaDateKey(createdDateTime);
+    if (!day || day === "unknown") {
+      return;
+    }
+    const key = `${organizerId}|${meetingId}|${day}`;
+    const group = unmatched.get(key) ?? {
+      organizerId,
+      meetingId,
+      day,
+      recordings: [],
+      transcripts: [],
+    };
+    if (kind === "recording" && recording) {
+      group.recordings.push(recording);
+    }
+    if (kind === "transcript" && transcript) {
+      group.transcripts.push(transcript);
+    }
+    unmatched.set(key, group);
+  };
+
+  for (const organizerId of organizerIds) {
+    const recordings = recordingsByOrganizer.get(organizerId);
+    if (recordings) {
+      for (const [meetingId, items] of recordings) {
+        for (const item of items) {
+          if (!usedRecordingIds.has(item.id)) {
+            addUnmatched(organizerId, meetingId, item.createdDateTime, "recording", item);
+          }
+        }
+      }
+    }
+    const transcripts = transcriptsByOrganizer.get(organizerId);
+    if (transcripts) {
+      for (const [meetingId, items] of transcripts) {
+        for (const item of items) {
+          if (!usedTranscriptIds.has(item.id)) {
+            addUnmatched(
+              organizerId,
+              meetingId,
+              item.createdDateTime,
+              "transcript",
+              undefined,
+              item,
+            );
+          }
+        }
+      }
+    }
+  }
+
+  const mailbox = meetings[0];
+  const extraMeetings: MeetingSummary[] = [];
+  const detailsCache = new Map<string, { subject: string; joinUrl: string } | null>();
+
+  for (const group of unmatched.values()) {
+    const recording = latestArtifact(group.recordings);
+    const transcript = latestArtifact(group.transcripts);
+    if (!recording && !transcript) {
+      continue;
+    }
+
+    const template = templateByMeetingId.get(group.meetingId);
+    let subject = template?.subject;
+    let joinUrl = template?.joinUrl;
+    if (!joinUrl) {
+      const cacheKey = `${group.organizerId}|${group.meetingId}`;
+      let details = detailsCache.get(cacheKey);
+      if (details === undefined) {
+        details = await getOnlineMeetingDetails(group.organizerId, group.meetingId);
+        detailsCache.set(cacheKey, details);
+      }
+      subject = details?.subject;
+      joinUrl = details?.joinUrl;
+    }
+    if (!joinUrl || !subject) {
+      continue;
+    }
+
+    const start =
+      recording?.createdDateTime ||
+      transcript?.createdDateTime ||
+      "";
+    const end = recording?.endDateTime || start;
+    extraMeetings.push({
+      eventId: `artifact:${group.meetingId}:${group.day}`,
+      subject,
+      start,
+      end,
+      joinUrl,
+      userId: mailbox.userId,
+      userDisplayName: mailbox.userDisplayName,
+      organizerId: group.organizerId,
+      seriesMasterId: template?.seriesMasterId,
+      onlineMeetingId: group.meetingId,
+      latestTranscriptId: transcript?.id,
+      hasTranscript: Boolean(transcript),
+      hasRecording: Boolean(recording),
+    });
+  }
+
+  return [...annotated, ...extraMeetings];
 }
 
 export async function getRecentMeetingsWithTranscripts(
@@ -898,33 +1306,35 @@ async function loadRecentMeetingsWithTranscripts(
 ): Promise<MeetingListResult> {
   const meetings = await getRecentMeetings(userId, daysBack, userDisplayName);
 
+  const withArtifacts = async (
+    transcriptsDisabled: boolean,
+  ): Promise<MeetingSummary[]> => {
+    const annotated = await enrichMeetingsWithArtifacts(meetings, daysBack, {
+      transcriptsDisabled,
+    });
+    return dedupeMeetings(
+      annotated.filter(
+        (meeting) => meeting.hasTranscript || meeting.hasRecording,
+      ),
+    );
+  };
+
   if (transcriptsDisabledKnown) {
-    const annotated = await annotateRecordingAvailability(meetings);
     return setCachedMeetingList(cacheKey, {
-      meetings: dedupeMeetings(annotated),
+      meetings: await withArtifacts(true),
       transcriptAccessDisabled: true,
     });
   }
 
   try {
-    const withTranscripts = await filterMeetingsWithTranscripts(
-      meetings,
-      daysBack,
-    );
-    const annotated = await annotateRecordingAvailability(withTranscripts);
     return setCachedMeetingList(cacheKey, {
-      meetings: dedupeMeetings(
-        annotated.filter(
-          (meeting) => meeting.hasTranscript || meeting.hasRecording,
-        ),
-      ),
+      meetings: await withArtifacts(false),
       transcriptAccessDisabled: false,
     });
   } catch (error) {
     if (error instanceof GraphError && error.code === "TRANSCRIPTS_DISABLED") {
-      const annotated = await annotateRecordingAvailability(meetings);
       return setCachedMeetingList(cacheKey, {
-        meetings: dedupeMeetings(annotated),
+        meetings: await withArtifacts(true),
         transcriptAccessDisabled: true,
       });
     }
@@ -995,6 +1405,48 @@ function stripHtml(html: string): string {
     .trim();
 }
 
+function chatImageNames(html: string, attachments: GraphChatAttachment[]): string[] {
+  const names: string[] = [];
+  const seen = new Set<string>();
+  const add = (value: string): void => {
+    const name = value.replace(/\s+/g, " ").trim();
+    if (!name || seen.has(name.toLowerCase())) {
+      return;
+    }
+    seen.add(name.toLowerCase());
+    names.push(name.slice(0, 80));
+  };
+
+  for (const attachment of attachments) {
+    const name = attachment.name?.trim() ?? "";
+    if (name && isImageAttachmentName(name, attachment.contentType)) {
+      add(name);
+    }
+  }
+
+  const imageTags = html.match(/<img\b[^>]*>/gi) ?? [];
+  for (const tag of imageTags) {
+    const alt = tag.match(/\balt="([^"]*)"/i)?.[1]?.trim() ?? "";
+    const label = tag.match(/\baria-label="([^"]*)"/i)?.[1]?.trim() ?? "";
+    add(alt || label || "Screenshot");
+  }
+
+  return names;
+}
+
+function formatChatLine(entry: {
+  time: string;
+  speaker: string;
+  text: string;
+  webUrl: string;
+  images: string[];
+}): string {
+  const stamp = entry.time ? `${formatKsaDateTime(entry.time)} ` : "";
+  const links = formatChatSourceLinks(entry.webUrl, entry.images);
+  const body = entry.text || (entry.images.length > 0 ? "" : "");
+  return `${stamp}${entry.speaker}: ${body} ${links}`.replace(/\s+/g, " ").trim();
+}
+
 export async function fetchMeetingChat(
   organizerId: string,
   joinUrl: string,
@@ -1016,7 +1468,13 @@ export async function fetchMeetingChat(
       return { chat: "", messageCount: 0, status: "empty" };
     }
 
-    const entries: Array<{ time: string; speaker: string; text: string }> = [];
+    const entries: Array<{
+      time: string;
+      speaker: string;
+      text: string;
+      webUrl: string;
+      images: string[];
+    }> = [];
     let nextPath = `/chats/${threadId}/messages`;
     let useTop = true;
     while (nextPath && entries.length < 500) {
@@ -1043,8 +1501,13 @@ export async function fetchMeetingChat(
           continue;
         }
 
-        const text = stripHtml(message.body?.content ?? "");
-        if (!text) {
+        const html = message.body?.content ?? "";
+        const text = stripHtml(html);
+        const images = chatImageNames(html, message.attachments ?? []);
+        const rawUrl = message.webUrl?.trim() ?? "";
+        const permalink = rawUrl ? toTeamsMessagePermalink(rawUrl) : "";
+        const webUrl = isSafeHttpUrl(permalink) ? permalink : "";
+        if (!text && images.length === 0) {
           continue;
         }
 
@@ -1057,6 +1520,8 @@ export async function fetchMeetingChat(
           time,
           speaker: message.from?.user?.displayName ?? "Unknown",
           text,
+          webUrl,
+          images,
         });
       }
 
@@ -1081,12 +1546,7 @@ export async function fetchMeetingChat(
       ? entries.filter((entry) => getKsaDateKey(entry.time) === ksaDateKey)
       : entries;
 
-    const chat = sameDay
-      .map((entry) => {
-        const stamp = entry.time ? `${formatKsaDateTime(entry.time)} ` : "";
-        return `${stamp}${entry.speaker}: ${entry.text}`;
-      })
-      .join("\n");
+    const chat = sameDay.map((entry) => formatChatLine(entry)).join("\n");
 
     return {
       chat,
@@ -1361,13 +1821,11 @@ export async function listRecordings(
         .get()) as GraphRecordingsResponse;
 
       for (const item of response.value ?? []) {
-        if (!item.id) {
+        const recording = toRecordingInfo(item);
+        if (!recording) {
           continue;
         }
-        collected.push({
-          id: item.id,
-          createdDateTime: item.createdDateTime ?? "",
-        });
+        collected.push(recording);
       }
 
       nextPath = response["@odata.nextLink"]
@@ -1389,34 +1847,19 @@ export async function getRecordingContent(
   userId: string,
   meetingId: string,
   recordingId: string,
+  contentUrl?: string,
 ): Promise<RecordingContent> {
   const token = await acquireAccessToken();
   const url =
+    contentUrl?.trim() ||
     `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(userId)}` +
-    `/onlineMeetings/${encodeURIComponent(meetingId)}` +
-    `/recordings/${encodeURIComponent(recordingId)}/content`;
+      `/onlineMeetings/${encodeURIComponent(meetingId)}` +
+      `/recordings/${encodeURIComponent(recordingId)}/content`;
 
   try {
-    // Graph often 302-redirects recording content to a pre-authenticated
-    // storage URL. Forwarding the Graph bearer token to that host can fail,
-    // so handle the redirect manually and refetch without the auth header.
-    let response = await fetch(url, {
-      headers: { Authorization: `Bearer ${token}` },
-      redirect: "manual",
-    });
-
-    if (
-      response.status === 301 ||
-      response.status === 302 ||
-      response.status === 303 ||
-      response.status === 307 ||
-      response.status === 308
-    ) {
-      const location = response.headers.get("location");
-      if (location) {
-        response = await fetch(location);
-      }
-    }
+    // Graph may return the bytes directly or 302 to OneDrive/SharePoint.
+    // Keep the Graph bearer token only for graph.microsoft.com hops.
+    const response = await fetchRecordingResponse(url, token);
 
     if (!response.ok) {
       let message = "Failed to fetch recording content.";
@@ -1501,13 +1944,11 @@ export async function fetchLatestRecording(
     knownMeetingId ?? (await resolveOnlineMeetingId(organizerId, joinUrl));
 
   const recordings = await listRecordings(organizerId, meetingId);
-  const latestRecordingId = (
-    occurrenceStart
-      ? pickArtifactForOccurrence(recordings, occurrenceStart, occurrenceEnd)
-      : recordings[0]
-  )?.id;
+  const selected = occurrenceStart
+    ? pickArtifactForOccurrence(recordings, occurrenceStart, occurrenceEnd)
+    : recordings[0];
 
-  if (!latestRecordingId) {
+  if (!selected?.id) {
     throw new GraphError(
       "No recording is available for this meeting. Ensure the meeting was recorded.",
       404,
@@ -1518,8 +1959,9 @@ export async function fetchLatestRecording(
   const content = await getRecordingContent(
     organizerId,
     meetingId,
-    latestRecordingId,
+    selected.id,
+    selected.recordingContentUrl,
   );
 
-  return { ...content, recordingId: latestRecordingId, meetingId };
+  return { ...content, recordingId: selected.id, meetingId };
 }

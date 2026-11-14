@@ -18,7 +18,7 @@ function TranscriptSkeleton(): React.ReactNode {
       {Array.from({ length: 12 }).map((_, index) => (
         <div
           key={index}
-          className="h-3 rounded bg-slate-200"
+          className="h-3 rounded bg-zinc-100"
           style={{ width: `${70 + (index % 4) * 7}%` }}
         />
       ))}
@@ -54,16 +54,14 @@ export function TranscriptPanel({
   artifactSource = null,
 }: TranscriptPanelProps): React.ReactNode {
   return (
-    <section className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-      <header className="border-b border-slate-200 px-5 py-4">
-        <h2 className="text-base font-semibold text-slate-900">
-          Transcript
-        </h2>
+    <section className="flex h-full min-h-[24rem] flex-col overflow-hidden border-zinc-200 bg-white lg:min-h-0 lg:border-r">
+      <header className="border-b border-zinc-200 px-5 py-4">
+        <h2 className="text-sm font-medium text-zinc-900">Transcript</h2>
         {meetingSubject ? (
-          <p className="mt-1 text-sm text-slate-500">{meetingSubject}</p>
+          <p className="mt-1 text-sm text-zinc-500">{meetingSubject}</p>
         ) : null}
         {transcript || chat ? (
-          <p className="mt-1 text-xs text-slate-400">
+          <p className="mt-1 text-xs text-zinc-400">
             {transcript ? "Spoken transcript loaded" : "No spoken transcript"}
             {" · "}
             {chatStatusLabel(chat, chatStatus)}
@@ -81,25 +79,21 @@ export function TranscriptPanel({
           <div className="space-y-6 p-6">
             {transcript ? (
               <section>
-                <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Spoken transcript
-                </h3>
-                <pre className="whitespace-pre-wrap font-mono text-sm leading-relaxed text-slate-700">
+                <h3 className="mb-2 text-xs font-medium text-zinc-400">Spoken</h3>
+                <pre className="whitespace-pre-wrap font-mono text-sm leading-relaxed text-zinc-700">
                   {transcript}
                 </pre>
               </section>
             ) : null}
             {chat?.trim() ? (
               <section>
-                <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Meeting chat
-                </h3>
-                <pre className="whitespace-pre-wrap font-mono text-sm leading-relaxed text-slate-700">
+                <h3 className="mb-2 text-xs font-medium text-zinc-400">Chat</h3>
+                <pre className="whitespace-pre-wrap font-mono text-sm leading-relaxed text-zinc-700">
                   {chat}
                 </pre>
               </section>
             ) : (
-              <p className="text-sm text-slate-500">
+              <p className="text-sm text-zinc-500">
                 {chatStatus === "forbidden"
                   ? chatError ??
                     "Graph denied meeting chat. Grant Chat.Read.All and ChatMessage.Read.All application permissions, then restart the app."
@@ -110,7 +104,7 @@ export function TranscriptPanel({
             )}
           </div>
         ) : recordingFallback ? (
-          <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center text-sm text-slate-500">
+          <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center text-sm text-zinc-500">
             <p>
               Graph cannot return this transcript yet. A meeting recording is
               available — click Generate Analysis to analyze the video.
@@ -123,8 +117,8 @@ export function TranscriptPanel({
             ) : null}
           </div>
         ) : (
-          <div className="flex h-full items-center justify-center p-6 text-sm text-slate-500">
-            Select a meeting to view its parsed transcript.
+          <div className="flex h-full items-center justify-center p-6 text-sm text-zinc-400">
+            Select a meeting.
           </div>
         )}
       </div>

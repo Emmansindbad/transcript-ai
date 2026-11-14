@@ -26,7 +26,7 @@ const ERROR_HINTS: Record<string, string> = {
   CHAT_FORBIDDEN:
     "Confirm Chat.Read.All and ChatMessage.Read.All are Application permissions on the same app as AZURE_CLIENT_ID (not a different registration), Grant admin consent, then open Graph health and click Refresh token. Until Graph accepts chat, analysis uses the spoken transcript and optional recording only.",
   VIDEO_TOO_LARGE:
-    "Recordings over 80 MB are skipped so the server does not run out of memory. Uncheck Analyze recording video, or analyze from transcript and chat.",
+    "Recordings over 150 MB are skipped so the server does not run out of memory. Uncheck Analyze recording video, or analyze from transcript and chat.",
   TRANSCRIPTS_DISABLED:
     "Microsoft turned this tenant control on by default at the end of July 2026. The Teams admin toggle can take hours to reach Graph. Force it with: Connect-MicrosoftTeams; Set-CsTeamsMeetingConfiguration -EnableGraphTranscriptAccess $true -EnableAttributedTranscripts $true -Identity Global. Then confirm with Get-CsTeamsMeetingConfiguration. Until Graph accepts transcripts, this app lists calendar meetings and can analyze recordings.",
   RATE_LIMIT:
@@ -64,39 +64,21 @@ export function ErrorBanner({
       role="alert"
       className={
         isWarning
-          ? "border-b border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"
-          : "border-b border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
+          ? "border-b border-zinc-200 bg-white px-5 py-3 text-sm text-zinc-800"
+          : "border-b border-red-200 bg-red-50 px-5 py-3 text-sm text-red-900"
       }
     >
       <div className="mx-auto flex max-w-7xl items-start justify-between gap-4">
         <div>
           <p className="font-medium">{message}</p>
-          {hint ? (
-            <p className={isWarning ? "mt-1 text-amber-800" : "mt-1 text-red-700"}>
-              {hint}
-            </p>
-          ) : null}
-          {code ? (
-            <p
-              className={
-                isWarning
-                  ? "mt-1 font-mono text-xs text-amber-700"
-                  : "mt-1 font-mono text-xs text-red-600"
-              }
-            >
-              Code: {code}
-            </p>
-          ) : null}
+          {hint ? <p className="mt-1 text-xs leading-5 text-zinc-500">{hint}</p> : null}
+          {code ? <p className="mt-1 font-mono text-[11px] text-zinc-400">{code}</p> : null}
         </div>
         {onDismiss ? (
           <button
             type="button"
             onClick={onDismiss}
-            className={
-              isWarning
-                ? "shrink-0 rounded-md px-2 py-1 text-amber-800 hover:bg-amber-100"
-                : "shrink-0 rounded-md px-2 py-1 text-red-700 hover:bg-red-100"
-            }
+            className="shrink-0 rounded-md px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
             aria-label="Dismiss error"
           >
             Dismiss

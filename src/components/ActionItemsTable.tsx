@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { DEV_TAGS, normalizeDevTag } from "@/lib/dev-tags";
 import type { MeetingActionItem, TeamsAccountStatus } from "@/types/meeting";
+import { fieldClass, labelClass, primaryButtonClass, secondaryButtonClass } from "@/components/ui-classes";
 
 interface ActionItemsTableProps {
   actionItems: MeetingActionItem[];
@@ -23,9 +24,6 @@ interface ActionItemsTableProps {
   pmtSummary?: string | null;
   pmtLinks?: Array<{ number: number; url: string; created: boolean }>;
 }
-
-const INPUT_CLASS =
-  "w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200";
 
 function updateItem(
   items: MeetingActionItem[],
@@ -59,43 +57,36 @@ export function ActionItemsTable({
 
   if (actionItems.length === 0) {
     return (
-      <div className="border-b border-slate-200 bg-slate-50 px-5 py-4">
-        <h3 className="text-sm font-semibold text-slate-900">Action Items</h3>
-        <p className="mt-1 text-sm text-slate-500">
-          No action items were identified for this meeting.
-        </p>
+      <div className="border-b border-zinc-200 px-5 py-4">
+        <h3 className="text-sm font-medium text-zinc-900">Action items</h3>
+        <p className="mt-1 text-sm text-zinc-500">None found in this meeting.</p>
       </div>
     );
   }
 
   return (
-    <div className="border-b border-slate-200 bg-slate-50 px-5 py-4">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+    <div className="border-b border-zinc-200 px-5 py-4">
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h3 className="text-sm font-semibold text-slate-900">Action Items</h3>
-          <p className="mt-1 text-xs text-slate-500">
-            {selectedCount} of {actionItems.length} selected · email{" "}
-            {emailRecipient}. Edit before sending. Uncheck items to skip.
+          <h3 className="text-sm font-medium text-zinc-900">Action items</h3>
+          <p className="mt-1 text-xs text-zinc-500">
+            {selectedCount} of {actionItems.length} selected · {emailRecipient}
           </p>
-          <p className="mt-1 text-xs text-slate-500">
+          <p className="mt-1 text-xs text-zinc-400">
             {teamsAccount?.signedIn
-              ? `Teams chats send as ${teamsAccount.displayName ?? teamsAccount.username}.`
-              : "Sign in once to send each ticket as a Teams chat from your account. Entra needs a Web redirect URI of http://localhost:3000/api/auth/teams/callback."}
+              ? `Teams sends as ${teamsAccount.displayName ?? teamsAccount.username}.`
+              : "Sign in to send each ticket from your Teams account."}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {sendSuccess && sentRecipients.length > 0 ? (
-            <span className="rounded-lg border border-green-300 bg-green-50 px-3 py-2 text-sm font-medium text-green-800">
-              Sent to {sentRecipients[0]}
-            </span>
+            <span className="text-sm text-emerald-700">Sent to {sentRecipients[0]}</span>
           ) : null}
           {teamsSummary ? (
-            <span className="rounded-lg border border-green-300 bg-green-50 px-3 py-2 text-sm font-medium text-green-800">
-              {teamsSummary}
-            </span>
+            <span className="text-sm text-emerald-700">{teamsSummary}</span>
           ) : null}
           {pmtSummary ? (
-            <div className="rounded-lg border border-green-300 bg-green-50 px-3 py-2 text-sm font-medium text-green-800">
+            <div className="text-sm text-emerald-700">
               <p>{pmtSummary}</p>
               {pmtLinks.length > 0 ? (
                 <p className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
@@ -118,7 +109,7 @@ export function ActionItemsTable({
             <button
               type="button"
               onClick={onTeamsSignOut}
-              className="rounded-lg px-2 py-2 text-sm font-medium text-slate-500 hover:text-slate-800"
+              className="rounded-md px-2 py-2 text-sm text-zinc-500 hover:text-zinc-900"
             >
               Sign out
             </button>
@@ -127,14 +118,14 @@ export function ActionItemsTable({
             <div className="flex flex-wrap items-center gap-2">
               <label
                 title="Add iris.ebale@sindbad.tech so the chat is a group of three"
-                className="flex cursor-pointer items-center gap-2 rounded-lg border border-sky-200 bg-white px-3 py-2 text-sm font-medium text-sky-800 shadow-sm"
+                className="flex cursor-pointer items-center gap-2 text-sm text-zinc-600"
               >
                 <input
                   type="checkbox"
                   checked={includeIris}
                   disabled={isSendingTeams}
                   onChange={(event) => setIncludeIris(event.target.checked)}
-                  className="h-4 w-4 rounded border-slate-300 text-sky-700 focus:ring-sky-500 disabled:cursor-not-allowed"
+                  className="h-4 w-4 accent-zinc-900 disabled:cursor-not-allowed"
                 />
                 include Iris
               </label>
@@ -142,7 +133,7 @@ export function ActionItemsTable({
                 type="button"
                 onClick={() => onSendTeams(includeIris)}
                 disabled={isSendingTeams || selectedCount === 0}
-                className="rounded-lg border border-sky-200 bg-white px-4 py-2 text-sm font-medium text-sky-800 shadow-sm transition-colors hover:bg-sky-50 disabled:cursor-not-allowed disabled:text-slate-400"
+                className={secondaryButtonClass}
               >
                 {isSendingTeams ? "Sending to Teams…" : "Send to Assignee"}
               </button>
@@ -151,7 +142,7 @@ export function ActionItemsTable({
             <button
               type="button"
               onClick={onTeamsSignIn}
-              className="rounded-lg border border-sky-200 bg-white px-4 py-2 text-sm font-medium text-sky-800 shadow-sm transition-colors hover:bg-sky-50"
+              className={secondaryButtonClass}
             >
               Sign in to Teams
             </button>
@@ -160,7 +151,7 @@ export function ActionItemsTable({
             type="button"
             onClick={onSendPmt}
             disabled={isSendingPmt || selectedCount === 0}
-            className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500"
+            className={primaryButtonClass}
           >
             {isSendingPmt ? "Creating PMT tickets…" : "Create Ticket to PMT"}
           </button>
@@ -168,7 +159,7 @@ export function ActionItemsTable({
             type="button"
             onClick={onSendEmail}
             disabled={isSending || sendSuccess || selectedCount === 0}
-            className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500"
+            className={secondaryButtonClass}
           >
             {isSending ? "Sending…" : sendSuccess ? "Email Sent" : "Send via Email"}
           </button>
@@ -179,10 +170,10 @@ export function ActionItemsTable({
         {actionItems.map((item, index) => (
           <article
             key={item.id}
-            className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm"
+            className="rounded-md border border-zinc-200 bg-white p-4"
           >
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-              <label className="flex items-center gap-2 text-xs font-semibold text-indigo-600">
+              <label className="flex items-center gap-2 text-xs text-zinc-500">
                 <input
                   type="checkbox"
                   checked={item.include}
@@ -193,21 +184,19 @@ export function ActionItemsTable({
                       }),
                     )
                   }
-                  className="h-4 w-4 rounded border-slate-300 text-indigo-600"
+                  className="h-4 w-4 accent-zinc-900"
                 />
                 Task #{index + 1} · {item.meetingTitle} · {item.meetingDate}
               </label>
               {item.alreadyFiled ? (
-                <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-800">
-                  Already filed
-                </span>
+                <span className="text-[11px] text-amber-700">Already filed</span>
               ) : null}
               {item.pmtUrl && item.pmtNumber ? (
                 <a
                   href={item.pmtUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-800"
+                  className="text-[11px] text-emerald-700 underline decoration-emerald-200 underline-offset-2"
                 >
                   PMT #{item.pmtNumber}
                 </a>
@@ -215,7 +204,7 @@ export function ActionItemsTable({
             </div>
 
             <label className="block">
-              <span className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+              <span className={labelClass}>
                 Title
               </span>
               <input
@@ -225,13 +214,13 @@ export function ActionItemsTable({
                     updateItem(actionItems, item.id, { title: event.target.value }),
                   )
                 }
-                className={INPUT_CLASS}
+                className={fieldClass}
               />
             </label>
 
             <div className="mt-3 grid grid-cols-2 gap-3">
               <label className="block">
-                <span className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                <span className={labelClass}>
                   Type
                 </span>
                 <select
@@ -243,14 +232,14 @@ export function ActionItemsTable({
                       }),
                     )
                   }
-                  className={INPUT_CLASS}
+                  className={fieldClass}
                 >
                   <option value="Task">Task</option>
                   <option value="Bug">Bug</option>
                 </select>
               </label>
               <label className="block">
-                <span className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                <span className={labelClass}>
                   Status
                 </span>
                 <input
@@ -262,11 +251,11 @@ export function ActionItemsTable({
                       }),
                     )
                   }
-                  className={INPUT_CLASS}
+                  className={fieldClass}
                 />
               </label>
               <label className="block">
-                <span className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                <span className={labelClass}>
                   Priority
                 </span>
                 <select
@@ -282,7 +271,7 @@ export function ActionItemsTable({
                       }),
                     )
                   }
-                  className={INPUT_CLASS}
+                  className={fieldClass}
                 >
                   <option value="High">High</option>
                   <option value="Medium">Medium</option>
@@ -290,7 +279,7 @@ export function ActionItemsTable({
                 </select>
               </label>
               <label className="block">
-                <span className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                <span className={labelClass}>
                   Due
                 </span>
                 <input
@@ -302,13 +291,13 @@ export function ActionItemsTable({
                       }),
                     )
                   }
-                  className={INPUT_CLASS}
+                  className={fieldClass}
                 />
               </label>
             </div>
 
             <label className="mt-3 block">
-              <span className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+              <span className={labelClass}>
                 Assignee
               </span>
               <input
@@ -320,16 +309,16 @@ export function ActionItemsTable({
                     }),
                   )
                 }
-                className={INPUT_CLASS}
+                className={fieldClass}
               />
               {item.assigneeUpn ? (
-                <p className="mt-1 text-xs text-slate-500">{item.assigneeUpn}</p>
+                <p className="mt-1 text-xs text-zinc-400">{item.assigneeUpn}</p>
               ) : null}
             </label>
 
             <div className="mt-3 grid grid-cols-2 gap-3">
               <label className="block">
-                <span className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                <span className={labelClass}>
                   Dev Tag
                 </span>
                 <select
@@ -341,7 +330,7 @@ export function ActionItemsTable({
                       }),
                     )
                   }
-                  className={INPUT_CLASS}
+                  className={fieldClass}
                 >
                   {DEV_TAGS.map((tag) => (
                     <option key={tag} value={tag}>
@@ -351,7 +340,7 @@ export function ActionItemsTable({
                 </select>
               </label>
               <label className="block">
-                <span className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                <span className={labelClass}>
                   Related To
                 </span>
                 <input
@@ -363,13 +352,13 @@ export function ActionItemsTable({
                       }),
                     )
                   }
-                  className={INPUT_CLASS}
+                  className={fieldClass}
                 />
               </label>
             </div>
 
             <label className="mt-3 block">
-              <span className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+              <span className={labelClass}>
                 Description
               </span>
               <textarea
@@ -382,19 +371,20 @@ export function ActionItemsTable({
                   )
                 }
                 rows={5}
-                className={INPUT_CLASS}
+                className={fieldClass}
               />
+              <p className="mt-1 text-[11px] text-zinc-400">
+                Chat or screenshot sources use [title](link) from Teams Copy link.
+              </p>
             </label>
 
             {(item.evidence ?? []).length > 0 ? (
-              <div className="mt-3 rounded-md bg-slate-50 px-3 py-2">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                  Evidence
-                </p>
-                <ul className="mt-1 space-y-1 text-xs text-slate-600">
+              <div className="mt-3 border-t border-zinc-100 pt-3">
+                <p className="text-xs font-medium text-zinc-400">Evidence</p>
+                <ul className="mt-1 space-y-1 text-xs text-zinc-600">
                   {(item.evidence ?? []).map((quote, quoteIndex) => (
                     <li key={`${item.id}-ev-${quoteIndex}`}>
-                      <span className="font-medium text-slate-700">
+                      <span className="font-medium text-zinc-800">
                         {quote.timestamp || "time n/a"}
                         {quote.speaker ? ` · ${quote.speaker}` : ""}
                       </span>

@@ -2,12 +2,22 @@ import "server-only";
 
 import type { MeetingActionItem, PmtCreateResult, PmtTicketResult, TenantUser } from "@/types/meeting";
 import { resolveDirectoryAssignee } from "@/lib/assignees";
+import { rewriteTeamsPermalinks } from "@/lib/chat-links";
 import { normalizeDevTag } from "@/lib/dev-tags";
 import { getPmtApiToken, getPmtBaseUrl } from "@/lib/env";
 import { AppError } from "@/lib/errors";
 import { listTenantUsers } from "@/lib/m365";
 
-interface PmtTicketRequest {
+export interface PmtOpenTicket {
+  id: number;
+  number: number;
+  name: string;
+  url: string;
+  externalKey?: string;
+  description?: string;
+}
+
+export interface PmtTicketRequest {
   externalKey: string;
   name: string;
   itemType: "task" | "bug";
@@ -28,6 +38,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+function isOpenTicket(value: unknown): value is PmtOpenTicket {
+  if (!isRecord(value)) {
+    return false;
+  }
+  return (
+    typeof value.id === "number" &&
+    typeof value.number === "number" &&
+    typeof value.name === "string" &&
+    typeof value.url === "string" &&
+    (value.externalKey === undefined || value.externalKey === null || typeof value.externalKey === "string") &&
+    (value.description === undefined || value.description === null || typeof value.description === "string")
+  );
+}
+
 function isPmtTicket(value: unknown): value is PmtTicketResult {
   if (!isRecord(value)) {
     return false;
@@ -41,6 +65,8 @@ function isPmtTicket(value: unknown): value is PmtTicketResult {
     typeof value.created === "boolean" &&
     (value.warning === undefined || typeof value.warning === "string") &&
     (value.relatedLabel === undefined || typeof value.relatedLabel === "string") &&
+    (value.filled === undefined ||
+      (Array.isArray(value.filled) && value.filled.every((entry) => typeof entry === "string"))) &&
     (value.assigneeEmail === undefined || typeof value.assigneeEmail === "string") &&
     (value.assigneeDisplayName === undefined || typeof value.assigneeDisplayName === "string")
   );
@@ -94,7 +120,7 @@ function toPmtItem(item: MeetingActionItem, users: TenantUser[]): PmtTicketReque
     itemType: item.type === "Bug" ? "bug" : "task",
     priority: pmtPriority(item.priority),
   };
-  const description = clip(item.description, 10000);
+  const description = clip(rewriteTeamsPermalinks(item.description), 10000);
   const email = assigneeEmail(item, users);
   const dueAt = dueDate(item.deadline);
   const devTag = normalizeDevTag(item.devTag);
@@ -146,7 +172,8 @@ function pmtErrorMessage(status: number, body: unknown): string {
 
 function resultMessage(boardName: string, items: PmtTicketResult[]): string {
   const created = items.filter((item) => item.created).length;
-  const existing = items.length - created;
+  const filled = items.filter((item) => !item.created && (item.filled?.length ?? 0) > 0).length;
+  const unchanged = items.length - created - filled;
   const parts: string[] = [];
   if (created > 0) {
     parts.push(
@@ -155,10 +182,154 @@ function resultMessage(boardName: string, items: PmtTicketResult[]): string {
         : `Created ${created} tickets on ${boardName}`,
     );
   }
-  if (existing > 0) {
-    parts.push(existing === 1 ? "1 was already on PMT" : `${existing} were already on PMT`);
+  if (filled > 0) {
+    parts.push(
+      filled === 1
+        ? "Filled missing details on 1 existing ticket"
+        : `Filled missing details on ${filled} existing tickets`,
+    );
+  }
+  if (unchanged > 0) {
+    parts.push(unchanged === 1 ? "1 was already on PMT" : `${unchanged} were already on PMT`);
   }
   return `${parts.join(". ")}.`;
+}
+
+async function postPmtTickets(
+  boardName: string,
+  meetingDate: string | null,
+  items: PmtTicketRequest[],
+): Promise<{ board: { id: number; name: string }; items: PmtTicketResult[] }> {
+  let token: string;
+  try {
+    token = getPmtApiToken();
+  } catch {
+    throw new AppError(
+      "PMT is not configured on this PC. Add PMT_API_TOKEN and restart the analyzer.",
+      500,
+      "PMT_NOT_CONFIGURED",
+    );
+  }
+
+  const response = await fetch(`${getPmtBaseUrl()}/api/integrations/tickets`, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      boardName,
+      meetingDate,
+      items,
+    }),
+  });
+
+  const body: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new AppError(
+      pmtErrorMessage(response.status, body),
+      response.status === 404 || response.status === 409 || response.status === 422
+        ? response.status
+        : 502,
+      response.status === 401 ? "PMT_UNAUTHORIZED" : "PMT_CREATE_FAILED",
+    );
+  }
+
+  if (!isRecord(body) || !isRecord(body.board) || !Array.isArray(body.items)) {
+    throw new AppError("PMT returned an unexpected response.", 502, "PMT_CREATE_FAILED");
+  }
+  const boardId = body.board.id;
+  const name = body.board.name;
+  if (typeof boardId !== "number" || typeof name !== "string") {
+    throw new AppError("PMT returned an unexpected response.", 502, "PMT_CREATE_FAILED");
+  }
+  const tickets = body.items.filter(isPmtTicket);
+  if (tickets.length === 0) {
+    throw new AppError("PMT returned an unexpected response.", 502, "PMT_CREATE_FAILED");
+  }
+  return { board: { id: boardId, name }, items: tickets };
+}
+
+export async function listOpenPmtBoardTickets(
+  boardName: string,
+): Promise<{ board: { id: number; name: string }; tickets: PmtOpenTicket[] }> {
+  const name = boardName.replace(/[\u200B-\u200D\uFEFF]/g, "").trim();
+  if (!name) {
+    throw new AppError("Choose a PMT board.", 400, "PMT_BOARD_NAME");
+  }
+
+  let token: string;
+  try {
+    token = getPmtApiToken();
+  } catch {
+    throw new AppError(
+      "PMT is not configured on this PC. Add PMT_API_TOKEN and restart the analyzer.",
+      500,
+      "PMT_NOT_CONFIGURED",
+    );
+  }
+
+  const response = await fetch(
+    `${getPmtBaseUrl()}/api/integrations/tickets?boardName=${encodeURIComponent(name)}`,
+    {
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      cache: "no-store",
+    },
+  );
+  const body: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new AppError(
+      pmtErrorMessage(response.status, body),
+      response.status === 404 || response.status === 409 ? response.status : 502,
+      response.status === 401 ? "PMT_UNAUTHORIZED" : "PMT_LIST_FAILED",
+    );
+  }
+  if (!isRecord(body) || !isRecord(body.board) || !Array.isArray(body.tickets)) {
+    throw new AppError("PMT returned an unexpected ticket list.", 502, "PMT_LIST_FAILED");
+  }
+  const boardId = body.board.id;
+  const listedName = body.board.name;
+  if (typeof boardId !== "number" || typeof listedName !== "string") {
+    throw new AppError("PMT returned an unexpected ticket list.", 502, "PMT_LIST_FAILED");
+  }
+
+  return {
+    board: { id: boardId, name: listedName },
+    tickets: body.tickets.filter(isOpenTicket),
+  };
+}
+
+export async function createPmtTicketsOnBoard(
+  boardName: string,
+  items: PmtTicketRequest[],
+): Promise<PmtCreateResult> {
+  const name = boardName.replace(/[\u200B-\u200D\uFEFF]/g, "").trim();
+  if (!name) {
+    throw new AppError("Choose a PMT board for these tickets.", 400, "PMT_BOARD_NAME");
+  }
+  if (items.length === 0) {
+    throw new AppError("Select at least one issue to send.", 400, "NO_ACTION_ITEMS");
+  }
+
+  const BATCH_SIZE = 20;
+  const collected: PmtTicketResult[] = [];
+  let board = { id: 0, name };
+  for (let index = 0; index < items.length; index += BATCH_SIZE) {
+    const batch = items.slice(index, index + BATCH_SIZE);
+    const result = await postPmtTickets(boardName.trim(), null, batch);
+    board = result.board;
+    collected.push(...result.items);
+  }
+
+  return {
+    board,
+    items: collected,
+    message: resultMessage(board.name, collected),
+  };
 }
 
 export async function createPmtTickets(
@@ -222,54 +393,14 @@ export async function createPmtTickets(
       };
     });
 
-  let token: string;
-  try {
-    token = getPmtApiToken();
-  } catch {
-    throw new AppError(
-      "PMT is not configured on this PC. Add PMT_API_TOKEN and restart the analyzer.",
-      500,
-      "PMT_NOT_CONFIGURED",
-    );
-  }
-
-  const response = await fetch(`${getPmtBaseUrl()}/api/integrations/tickets`, {
-    method: "POST",
-    headers: {
-      Accept: "application/json",
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      boardName,
-      meetingDate: actionItems[0]?.meetingDate ?? null,
-      items: items.map((item) => toPmtItem(item, directory)),
-    }),
-  });
-
-  const body: unknown = await response.json().catch(() => null);
-  if (!response.ok) {
-    throw new AppError(
-      pmtErrorMessage(response.status, body),
-      response.status === 404 || response.status === 409 || response.status === 422
-        ? response.status
-        : 502,
-      response.status === 401 ? "PMT_UNAUTHORIZED" : "PMT_CREATE_FAILED",
-    );
-  }
-
-  if (!isRecord(body) || !isRecord(body.board) || !Array.isArray(body.items)) {
-    throw new AppError("PMT returned an unexpected response.", 502, "PMT_CREATE_FAILED");
-  }
-  const boardId = body.board.id;
-  const name = body.board.name;
-  if (typeof boardId !== "number" || typeof name !== "string") {
-    throw new AppError("PMT returned an unexpected response.", 502, "PMT_CREATE_FAILED");
-  }
-  const tickets = body.items.filter(isPmtTicket);
-  if (tickets.length !== body.items.length) {
-    throw new AppError("PMT returned an unexpected response.", 502, "PMT_CREATE_FAILED");
-  }
+  const posted = await postPmtTickets(
+    boardName,
+    actionItems[0]?.meetingDate ?? null,
+    items.map((item) => toPmtItem(item, directory)),
+  );
+  const tickets = posted.items;
+  const boardId = posted.board.id;
+  const name = posted.board.name;
 
   const withWarnings = tickets.map((ticket) => {
     const source = items.find((item) => item.filingKey === ticket.externalKey);

@@ -60,7 +60,7 @@ Also required:
 
 Set `GEMINI_API_KEY` from [Google AI Studio](https://aistudio.google.com/apikey). Optional `GEMINI_MODEL` caps the fallback list.
 
-Recordings larger than **80 MB** are skipped so the Node process does not load the whole file into memory.
+Recordings larger than **150 MB** are skipped so the Node process does not load the whole file into memory. Extra recorded sessions that are not on the calendar (same Teams series, different day) still appear in Fetch Data.
 
 ## Health
 

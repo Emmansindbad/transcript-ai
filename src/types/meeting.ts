@@ -139,6 +139,8 @@ export interface PmtTicketResult {
   created: boolean;
   warning?: string;
   relatedLabel?: string;
+  /** Fields written onto an existing ticket because they were still empty. */
+  filled?: string[];
   assigneeEmail?: string;
   assigneeDisplayName?: string;
 }

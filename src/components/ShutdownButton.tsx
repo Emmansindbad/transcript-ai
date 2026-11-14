@@ -26,7 +26,7 @@ export function ShutdownButton(): React.ReactNode {
 
   if (stopped) {
     return (
-      <p className="max-w-xs text-right text-xs font-medium text-slate-600">
+      <p className="max-w-xs text-right text-xs text-zinc-500">
         Analyzer stopped. Close this tab. Use the desktop shortcut to start it
         again.
       </p>
@@ -42,7 +42,7 @@ export function ShutdownButton(): React.ReactNode {
       disabled={stopping}
       title="Shut down the analyzer on this PC"
       aria-label="Shut down the analyzer on this PC"
-      className="shrink-0 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-800 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+      className="rounded-md px-2.5 py-1.5 text-sm text-zinc-500 transition-colors hover:bg-red-50 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-50"
     >
       {stopping ? "Stopping…" : "End"}
     </button>

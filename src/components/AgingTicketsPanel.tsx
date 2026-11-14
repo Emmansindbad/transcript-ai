@@ -12,6 +12,7 @@ import type {
   PmtAssigneeAgingTicket,
   TeamsAccountStatus,
 } from "@/types/meeting";
+import { fieldClass, labelClass, primaryButtonClass } from "@/components/ui-classes";
 
 interface AgingTicketsPanelProps {
   teamsAccount: TeamsAccountStatus | null;
@@ -22,9 +23,6 @@ interface ApiErrorResponse {
   error?: string;
   code?: string;
 }
-
-const FIELD_CLASS =
-  "w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200";
 
 function ticketKey(projectId: number, ticket: PmtAssigneeAgingTicket): string {
   return `${projectId}:${ticket.number}`;
@@ -171,31 +169,25 @@ export function AgingTicketsPanel({
   }
 
   return (
-    <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm lg:col-span-2 lg:p-5">
-      <div className="flex flex-wrap items-end justify-between gap-3">
+    <section>
+      <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h2 className="text-lg font-semibold text-slate-900">Aging Tickets</h2>
-          <p className="mt-1 text-sm text-slate-500">
-            The oldest open tickets for one person, five per project. Only tickets that have stayed in the same column for 7 days or more. Sent directly to that person.
+          <h2 className="text-lg font-medium tracking-tight text-zinc-900">Aging tickets</h2>
+          <p className="mt-1 max-w-xl text-sm text-zinc-500">
+            Five oldest open tickets on each project, kept in the same column for 7 days or more.
           </p>
         </div>
         {signedIn ? null : (
-          <button
-            type="button"
-            onClick={onTeamsSignIn}
-            className="rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700"
-          >
+          <button type="button" onClick={onTeamsSignIn} className={primaryButtonClass}>
             Sign in to Teams
           </button>
         )}
       </div>
 
       {signedIn ? (
-        <div className="mt-4 grid gap-3">
-          <label className="block max-w-md">
-            <span className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-              Person
-            </span>
+        <div className="mt-8 grid gap-4">
+          <label className="block max-w-sm">
+            <span className={labelClass}>Person</span>
             <select
               value={assignee}
               onChange={(event) => {
@@ -204,7 +196,7 @@ export function AgingTicketsPanel({
                 void loadReport(email, true);
               }}
               disabled={isLoading || (report?.people.length ?? 0) === 0}
-              className={FIELD_CLASS}
+              className={fieldClass}
             >
               {(report?.people ?? []).map((person) => (
                 <option key={person.email} value={person.email}>
@@ -214,39 +206,33 @@ export function AgingTicketsPanel({
             </select>
           </label>
           <label className="block">
-            <span className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-              Message
-            </span>
+            <span className={labelClass}>Message</span>
             <textarea
               value={note}
-                onChange={(event) => {
+              onChange={(event) => {
                 setNote(event.target.value);
               }}
               rows={4}
-              className={FIELD_CLASS}
+              className={fieldClass}
             />
           </label>
         </div>
       ) : (
-        <p className="mt-4 text-sm text-slate-600">
-          Sign in to choose a person and preview the tickets assigned to them.
-        </p>
+        <p className="mt-8 text-sm text-zinc-500">Sign in to choose a person.</p>
       )}
 
-      <div className="mt-4 overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
-        <div className="border-b border-slate-200 bg-white px-4 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-          Preview
-        </div>
-        <div className="px-4 py-4">
+      <div className="mt-8 border-t border-zinc-200 pt-6">
+        <p className="text-xs font-medium text-zinc-400">Preview</p>
+        <div className="mt-4">
           {isLoading ? (
-            <p className="text-sm text-slate-500">Loading aging tickets…</p>
+            <p className="text-sm text-zinc-500">Loading…</p>
           ) : preview?.person ? (
-            <div className="mx-auto max-w-3xl rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div>
               {note.trim() ? (
-                <p className="whitespace-pre-wrap text-sm leading-6 text-slate-800">
+                <p className="whitespace-pre-wrap text-sm leading-6 text-zinc-800">
                   {noteSegments(note.trim()).map((segment, index) =>
                     segment.mention ? (
-                      <span key={`${index}-${segment.text}`} className="font-medium text-blue-700">
+                      <span key={`${index}-${segment.text}`} className="font-medium">
                         {segment.text}
                       </span>
                     ) : (
@@ -256,33 +242,36 @@ export function AgingTicketsPanel({
                 </p>
               ) : null}
               {report && report.projects.length === 0 ? (
-                <p className="mt-4 text-sm text-slate-500">
+                <p className="mt-4 text-sm text-zinc-500">
                   No tickets have stayed in the same column for 7 days or more.
                 </p>
               ) : (
                 (report?.projects ?? []).map((project) => (
-                  <div key={project.id} className="mt-5">
-                    <h3 className="text-sm font-semibold text-slate-900">
-                      {project.name} - Top 5 aging tickets
+                  <div key={project.id} className="mt-6">
+                    <h3 className="text-sm font-medium text-zinc-900">
+                      {project.name}
                     </h3>
-                    <ol className="mt-2 list-decimal space-y-1.5 pl-5 text-sm">
+                    <ol className="mt-2 list-decimal space-y-2 pl-5 text-sm">
                       {project.tickets.map((ticket) => {
                         const key = ticketKey(project.id, ticket);
                         const checked = included.has(key);
                         return (
-                          <li key={key} className={checked ? "text-slate-800" : "text-slate-400"}>
+                          <li key={key} className={checked ? "text-zinc-800" : "text-zinc-400"}>
                             <label className="inline-flex items-start gap-2">
                               <input
                                 type="checkbox"
                                 checked={checked}
                                 onChange={() => toggleTicket(project, ticket)}
-                                className="mt-1"
+                                className="mt-1 accent-zinc-900"
                               />
                               <span>
-                                <a href={ticket.url} className="font-medium text-blue-700 hover:underline">
+                                <a
+                                  href={ticket.url}
+                                  className="font-medium underline decoration-zinc-300 underline-offset-2"
+                                >
                                   #{ticket.number} {ticket.name}
                                 </a>{" "}
-                                <span className="text-slate-500">({dayPhrase(ticket)})</span>
+                                <span className="text-zinc-400">({dayPhrase(ticket)})</span>
                               </span>
                             </label>
                           </li>
@@ -290,39 +279,39 @@ export function AgingTicketsPanel({
                       })}
                     </ol>
                     {project.more > 0 ? (
-                      <p className="mt-1 text-sm text-slate-500">
-                        And {project.more} more open {project.more === 1 ? "ticket" : "tickets"} on this project.
+                      <p className="mt-2 text-sm text-zinc-400">
+                        And {project.more} more open {project.more === 1 ? "ticket" : "tickets"}.
                       </p>
                     ) : null}
                   </div>
                 ))
               )}
               {report && report.omittedProjects > 0 ? (
-                <p className="mt-4 text-sm text-slate-500">
+                <p className="mt-4 text-sm text-zinc-400">
                   And {report.omittedProjects} other {report.omittedProjects === 1 ? "project" : "projects"}.
                 </p>
               ) : null}
-              <p className="mt-4 text-xs text-slate-500">
-                Uncheck a ticket to leave it out. This is the direct message {preview.person.name} receives.
+              <p className="mt-6 text-xs text-zinc-400">
+                Uncheck a ticket to leave it out of the message to {preview.person.name}.
               </p>
             </div>
           ) : (
-            <p className="text-sm text-slate-500">Choose a person to load their open tickets.</p>
+            <p className="text-sm text-zinc-400">Choose a person.</p>
           )}
         </div>
       </div>
 
-      {error ? <p className="mt-3 text-sm text-rose-700">{error}</p> : null}
-      {status ? <p className="mt-3 text-sm text-emerald-700">{status}</p> : null}
+      {error ? <p className="mt-4 text-sm text-red-700">{error}</p> : null}
+      {status ? <p className="mt-4 text-sm text-emerald-700">{status}</p> : null}
 
-      <div className="mt-4 flex justify-end">
+      <div className="mt-6 flex justify-end">
         <button
           type="button"
           onClick={() => {
             void sendPreview();
           }}
           disabled={!signedIn || !preview?.person || selectedCount === 0 || isSending}
-          className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+          className={primaryButtonClass}
         >
           {isSending ? "Sending…" : `Send to ${preview?.person?.name ?? "person"}`}
         </button>

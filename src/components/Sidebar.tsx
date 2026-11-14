@@ -8,13 +8,14 @@ import {
   getKsaDateKey,
   getKsaDateRangeBounds,
 } from "@/lib/ksa-time";
+import { fieldClass, labelClass, primaryButtonClass } from "@/components/ui-classes";
 
 interface SidebarProps {
   users: TenantUser[];
   selectedUserId: string;
   onUserChange: (userId: string) => void;
   meetings: MeetingSummary[];
-  selectedJoinUrl: string | null;
+  selectedEventId: string | null;
   onSelect: (meeting: MeetingSummary) => void;
   onClearSelection?: () => void;
   onFetchData: () => Promise<void>;
@@ -25,9 +26,6 @@ interface SidebarProps {
 }
 
 type SortOption = "date-desc" | "date-asc" | "name-asc" | "name-desc";
-
-const SELECT_CLASS =
-  "w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200";
 
 function getDateKey(isoDate: string): string {
   return getKsaDateKey(isoDate);
@@ -91,7 +89,7 @@ function LoadingSpinner({
 }): React.ReactNode {
   return (
     <svg
-      className={`animate-spin text-blue-600 ${className}`}
+      className={`animate-spin text-zinc-700 ${className}`}
       xmlns="http://www.w3.org/2000/svg"
       fill="none"
       viewBox="0 0 24 24"
@@ -127,7 +125,7 @@ export function Sidebar({
   selectedUserId,
   onUserChange,
   meetings,
-  selectedJoinUrl,
+  selectedEventId,
   onSelect,
   onClearSelection,
   onFetchData,
@@ -210,15 +208,11 @@ export function Sidebar({
   }
 
   return (
-    <aside className="flex h-full w-full flex-col border-r border-slate-200 bg-slate-50 lg:w-80 lg:shrink-0">
-      <div className="space-y-3 border-b border-slate-200 px-4 py-4">
-        <div>
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
-            Meetings
-          </h2>
-          <p className="mt-1 text-xs text-slate-400">
-            Fetch meetings from the last 30 days, then filter by date or name
-          </p>
+    <aside className="flex w-full shrink-0 flex-col border-b border-zinc-200 bg-zinc-50 lg:h-full lg:w-72 lg:border-r lg:border-b-0">
+      <div className="space-y-3 border-b border-zinc-200 px-4 py-4">
+        <div className="flex items-baseline justify-between gap-3">
+          <h2 className="text-sm font-medium text-zinc-900">Meetings</h2>
+          <p className="text-xs text-zinc-400">Last 30 days</p>
         </div>
 
         <button
@@ -227,20 +221,18 @@ export function Sidebar({
             void handleFetchData();
           }}
           disabled={isBrowseLoading || isLoadingUsers || selectedUserId === "all"}
-          className="flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500"
+          className={`${primaryButtonClass} w-full gap-2`}
         >
           {isBrowseLoading ? <LoadingSpinner className="h-4 w-4 text-white" /> : null}
-          Fetch Data
+          Fetch data
         </button>
 
         <label className="block">
-          <span className="mb-1.5 block text-xs font-medium text-slate-600">
-            Person
-          </span>
+          <span className={labelClass}>Person</span>
           <select
             value={selectedUserId}
             onChange={(event) => onUserChange(event.target.value)}
-            className={SELECT_CLASS}
+            className={fieldClass}
             disabled={isLoadingUsers && users.length === 0}
           >
             {isLoadingUsers && users.length === 0 ? (
@@ -258,7 +250,7 @@ export function Sidebar({
         </label>
 
         <label className="block">
-          <span className="mb-1.5 flex items-center gap-2 text-xs font-medium text-slate-600">
+          <span className={`${labelClass} flex items-center gap-2`}>
             Date
             {isBrowseLoading ? <LoadingSpinner className="h-3.5 w-3.5" /> : null}
           </span>
@@ -271,7 +263,7 @@ export function Sidebar({
               onChange={(event) => {
                 handleDateChange(event.target.value);
               }}
-              className={`${SELECT_CLASS}${isBrowseLoading ? " pr-10" : ""}`}
+              className={`${fieldClass}${isBrowseLoading ? " pr-10" : ""}`}
               disabled={isBrowseLoading}
               aria-busy={isBrowseLoading}
             />
@@ -280,8 +272,8 @@ export function Sidebar({
         </label>
 
         <label className="block">
-          <span className="mb-1.5 flex items-center gap-2 text-xs font-medium text-slate-600">
-            Meeting name
+          <span className={`${labelClass} flex items-center gap-2`}>
+            Meeting
             {isBrowseLoading ? <LoadingSpinner className="h-3.5 w-3.5" /> : null}
           </span>
           <div className="relative">
@@ -290,7 +282,7 @@ export function Sidebar({
               onChange={(event) => {
                 handleMeetingSubjectChange(event.target.value);
               }}
-              className={`${SELECT_CLASS}${isBrowseLoading ? " pr-10" : ""}`}
+              className={`${fieldClass}${isBrowseLoading ? " pr-10" : ""}`}
               disabled={isBrowseLoading}
               aria-busy={isBrowseLoading}
             >
@@ -312,13 +304,11 @@ export function Sidebar({
         </label>
 
         <label className="block">
-          <span className="mb-1.5 block text-xs font-medium text-slate-600">
-            Sort by
-          </span>
+          <span className={labelClass}>Sort</span>
           <select
             value={sortBy}
             onChange={(event) => setSortBy(event.target.value as SortOption)}
-            className={SELECT_CLASS}
+            className={fieldClass}
             disabled={isBrowseLoading || !hasLoadedMeetings}
           >
             <option value="date-desc">Date (newest first)</option>
@@ -330,7 +320,7 @@ export function Sidebar({
 
         {isBrowseLoading ? (
           <div
-            className="flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800"
+            className="flex items-center gap-2 text-sm text-zinc-500"
             role="status"
             aria-live="polite"
           >
@@ -342,67 +332,60 @@ export function Sidebar({
 
       <div className="flex-1 overflow-y-auto">
         {isBrowseLoading ? (
-          <div className="flex flex-col items-center justify-center gap-3 p-8 text-sm text-slate-500">
+          <div className="flex flex-col items-center justify-center gap-3 p-8 text-sm text-zinc-500">
             <LoadingSpinner className="h-8 w-8" />
             <p>Fetching meetings with transcripts…</p>
           </div>
         ) : !hasLoadedMeetings ? (
-          <div className="p-4 text-sm text-slate-500">
-            Click Fetch Data to load meetings from the last 30 days.
+          <div className="p-4 text-sm text-zinc-500">
+            Fetch data to load the last 30 days.
           </div>
         ) : hasLoadedMeetings && meetings.length === 0 ? (
-          <div className="p-4 text-sm text-slate-500">
-            No meetings with transcripts found for the selected person in the
-            last 30 days.
+          <div className="p-4 text-sm text-zinc-500">
+            No meetings with transcripts in the last 30 days.
           </div>
         ) : visibleMeetings.length === 0 ? (
-          <div className="p-4 text-sm text-slate-500">
-            No meetings match the selected filters.
+          <div className="p-4 text-sm text-zinc-500">
+            Nothing matches these filters.
           </div>
         ) : (
           <>
-            <p className="border-b border-slate-200 px-4 py-2 text-xs text-slate-500">
+            <p className="border-b border-zinc-200 px-4 py-2 text-xs text-zinc-400">
               {visibleMeetings.length}{" "}
               {visibleMeetings.length === 1 ? "meeting" : "meetings"}
               {effectiveMeetingSubject ? ` · ${effectiveMeetingSubject}` : ""}
               {selectedDate ? ` · ${formatDateLabel(selectedDate)}` : ""}
             </p>
-            <ul className="space-y-2 p-3">
+            <ul>
               {visibleMeetings.map((meeting) => {
-                const isSelected = meeting.joinUrl === selectedJoinUrl;
+                const isSelected = meeting.eventId === selectedEventId;
+                const marks = [
+                  meeting.hasTranscript ? "Transcript" : null,
+                  meeting.hasRecording ? "Recording" : null,
+                ].filter((mark): mark is string => mark !== null);
 
                 return (
                   <li key={`${meeting.userId}-${meeting.eventId}`}>
                     <button
                       type="button"
                       onClick={() => onSelect(meeting)}
-                      className={`w-full rounded-lg border px-3 py-3 text-left transition-colors ${
+                      className={`w-full border-b px-4 py-3 text-left transition-colors ${
                         isSelected
-                          ? "border-blue-500 bg-blue-50 shadow-sm"
-                          : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-100"
+                          ? "bg-zinc-900 text-white"
+                          : "border-zinc-200 hover:bg-white"
                       }`}
                     >
-                      <p className="text-xs font-semibold uppercase tracking-wide text-blue-600">
+                      <p className="text-xs text-zinc-400">
                         {formatMeetingDate(meeting.start)}
                       </p>
-                      <p className="mt-1 line-clamp-2 text-sm font-medium text-slate-900">
+                      <p className="mt-0.5 line-clamp-2 text-sm font-medium">
                         {meeting.subject}
                       </p>
-                      <div className="mt-2 flex flex-wrap gap-1">
-                        {meeting.hasTranscript ? (
-                          <span className="rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-800">
-                            Transcript
-                          </span>
-                        ) : null}
-                        {meeting.hasRecording ? (
-                          <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-medium text-indigo-800">
-                            Recording
-                          </span>
-                        ) : null}
-                      </div>
-                      {showOrganizer ? (
-                        <p className="mt-1 text-xs text-slate-500">
-                          {meeting.userDisplayName}
+                      {marks.length > 0 || showOrganizer ? (
+                        <p className={`mt-1 text-xs ${isSelected ? "text-zinc-400" : "text-zinc-500"}`}>
+                          {showOrganizer ? meeting.userDisplayName : null}
+                          {showOrganizer && marks.length > 0 ? " · " : null}
+                          {marks.join(" · ")}
                         </p>
                       ) : null}
                     </button>

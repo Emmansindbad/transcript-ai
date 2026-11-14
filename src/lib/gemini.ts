@@ -7,12 +7,14 @@ import {
   FileState,
   type ContentListUnion,
 } from "@google/genai";
+import type { CodeQcIssue } from "@/types/code-qc";
 import type {
   ActionItemEvidence,
   ActionItemPriority,
   ActionItemType,
   ParsedActionItem,
 } from "@/types/meeting";
+import { attachChatSourceLinks } from "@/lib/chat-links";
 import { DEV_TAGS, normalizeDevTag } from "@/lib/dev-tags";
 import { getEnvVar } from "@/lib/env";
 import { GeminiError } from "@/lib/errors";
@@ -50,7 +52,7 @@ STEP 1 — Return ONE JSON object only (no markdown fences, no text before or af
       "deadline": "TBD",
       "devTag": "#backend",
       "relatedTo": "Use Case 7",
-      "description": "Build the inactive-user redemption rule discussed in the meeting.\\n1. Trigger redemption when portfolio value (Purchasing Power + Equity) is below 100K.\\n2. Confirm the threshold and owner with product before release.",
+      "description": "Build the inactive-user redemption rule discussed in the meeting.\\n1. Trigger redemption when portfolio value (Purchasing Power + Equity) is below 100K.\\n2. Confirm the threshold and owner with product before release.\\n\\n[Chat message](https://teams.cloud.microsoft/l/message/19:example@thread.v2/123?context=%7B%22contextType%22%3A%22chat%22%7D)",
       "evidence": [
         {
           "timestamp": "00:12:04",
@@ -85,6 +87,7 @@ Ticket field rules:
 - relatedTo: related feature, use case, epic, or meeting topic if mentioned, otherwise "None".
 - description: full ticket body. At least two sentences or a numbered list. Include context, who is affected, trigger/acceptance criteria, and every figure, threshold, or date from the source. Use line breaks. Do not paste the title.
 - evidence: 1–2 short quotes from the spoken transcript or chat that ground the ticket. Copy timestamp and speaker from lines like "[00:12:04] Name: ...". If no timestamp exists, use "".
+- SOURCE LINKS: Meeting chat lines may already include Teams permalinks as markdown, e.g. [Chat message](https://teams.cloud.microsoft/l/message/...) or [screenshot.png](https://teams.cloud.microsoft/l/message/...). When a ticket is grounded in that chat message, or an image/screenshot attached there is the evidence, copy the exact [title](url) onto its own line at the end of description. Use a short accurate title (file name, "Screenshot in chat", or "Chat message"). Only add a link when it is necessary and traceable to that ticket. Never invent a URL. Never put links in the title. Never use teams.microsoft.com/dl/launcher URLs.
 - If there is truly no work, return "actionItems": []
 
 The "analysis" string is markdown for THIS meeting. Do not paste the JSON tickets again.
@@ -657,25 +660,29 @@ function parseGeminiJson(
 interface GenerateOptions {
   onChunk?: (text: string) => void;
   compact?: boolean;
+  responseSchema?: object;
 }
 
 interface AnalysisGenerationConfig {
   systemInstruction: string;
   responseMimeType: "application/json";
   maxOutputTokens: number;
-  responseSchema?: typeof ANALYSIS_RESPONSE_SCHEMA;
+  responseSchema?: object;
 }
 
 function getGenerationConfig(
   systemInstruction: string,
   compact: boolean,
+  responseSchema?: object,
 ): AnalysisGenerationConfig {
   const config: AnalysisGenerationConfig = {
     systemInstruction,
     responseMimeType: "application/json",
     maxOutputTokens: MAX_OUTPUT_TOKENS,
   };
-  if (!compact) {
+  if (responseSchema) {
+    config.responseSchema = responseSchema;
+  } else if (!compact) {
     config.responseSchema = ANALYSIS_RESPONSE_SCHEMA;
   }
   return config;
@@ -691,7 +698,11 @@ async function streamModelText(
   const request = {
     model,
     contents,
-    config: getGenerationConfig(systemInstruction, options.compact === true),
+    config: getGenerationConfig(
+      systemInstruction,
+      options.compact === true,
+      options.responseSchema,
+    ),
   };
   const models = ai.models as unknown as {
     generateContentStream?: (
@@ -893,6 +904,7 @@ Read the spoken transcript AND the meeting chat. Compare them for redundancy on 
 - Identify each item as Task or Bug.
 - Keep title and description different: the title is a short headline for the description.
 - Ground each ticket with evidence quotes and timestamps from lines like "[00:12:04] Speaker: ...".
+- If a chat line includes a markdown [title](url) permalink or image link and the ticket comes from that message or image, put that same [title](url) at the end of the description. Use teams.cloud.microsoft/l/message links only, never launcher.html.
 
 --- Spoken transcript ---
 ${transcript}
@@ -905,11 +917,15 @@ export async function analyzeTranscript(
   source: MeetingAnalysisSource,
   options: GenerateOptions = {},
 ): Promise<GeminiAnalysisResult> {
-  return runModelTier(
+  const result = await runModelTier(
     buildMeetingAnalysisPrompt(source),
     SYSTEM_PROMPT,
     options,
   );
+  return {
+    ...result,
+    actionItems: attachChatSourceLinks(result.actionItems, source.chat ?? ""),
+  };
 }
 
 const FILE_ACTIVE_POLL_INTERVAL_MS = 3000;
@@ -991,7 +1007,11 @@ export async function analyzeTranscriptWithVideo(
       `${buildMeetingAnalysisPrompt(source)}\n\nA meeting recording is also attached. Use it with the transcript and chat. If the transcript is empty, rely on the recording and chat.`,
     ]);
 
-    return await runModelTier(contents, VIDEO_SYSTEM_PROMPT, options);
+    const result = await runModelTier(contents, VIDEO_SYSTEM_PROMPT, options);
+    return {
+      ...result,
+      actionItems: attachChatSourceLinks(result.actionItems, source.chat ?? ""),
+    };
   } finally {
     if (file.name) {
       // Best-effort cleanup; ignore failures.
@@ -1010,4 +1030,215 @@ export function getActiveGeminiModelLabel(): string {
     return models[0];
   }
   return `${models[0]} → ${models[models.length - 1]}`;
+}
+
+const CODE_QC_RESPONSE_SCHEMA = {
+  type: "OBJECT",
+  properties: {
+    tickets: {
+      type: "ARRAY",
+      items: {
+        type: "OBJECT",
+        properties: {
+          title: { type: "STRING" },
+          type: { type: "STRING" },
+          priority: { type: "STRING" },
+          issueIds: { type: "ARRAY", items: { type: "STRING" } },
+          reason: { type: "STRING" },
+        },
+        required: ["title", "issueIds"],
+      },
+    },
+  },
+  required: ["tickets"],
+} as const;
+
+const CODE_QC_SYSTEM_PROMPT = `You are grouping SonarQube findings into PMT work packets for a software team.
+
+Return ONE JSON object only:
+{
+  "tickets": [
+    {
+      "title": "Fix hardcoded token in supabaseClient.js",
+      "type": "Bug",
+      "priority": "High",
+      "issueIds": ["A1", "A2"],
+      "reason": "Same secret-detection findings in one file"
+    }
+  ]
+}
+
+Rules:
+- Group issues that a developer would fix in one sitting: same file, or the same rule across the repo when it is a cleanup (prefer-const, unused vars).
+- Keep BLOCKER, CRITICAL, and VULNERABILITY findings on their own ticket unless they are clearly the same defect.
+- Distinct bugs stay separate. Do not dump the whole repo into one ticket.
+- Every input id must appear in exactly one ticket. Do not invent ids.
+- Prefer 8–40 tickets. Never more than 40.
+- title: 4–12 words, outcome-focused. No issue ids in the title.
+- type: "Bug" or "Task". Vulnerabilities and broken behavior are Bug. Code smells and cleanups are Task.
+- priority: "High", "Medium", or "Low" from the worst severity in the group (BLOCKER/CRITICAL = High, MAJOR = Medium, else Low).
+- issueIds: the A1/A2 ids from the catalog, not Sonar keys.
+- reason: one short sentence.`;
+
+const CODE_QC_COMPACT_RULES = `
+The previous attempt was truncated. Return COMPLETE valid JSON only.
+- At most 20 tickets covering the highest-severity work first.
+- Still assign every remaining id to some ticket (file-level groups are fine).
+- Finish the JSON object.`;
+
+export interface CodeQcGeminiTicket {
+  title: string;
+  type: "Task" | "Bug";
+  priority: "High" | "Medium" | "Low";
+  issueKeys: string[];
+  reason: string;
+}
+
+function parseCodeQcTickets(text: string): CodeQcGeminiTicket[] {
+  const extracted = extractJsonText(text);
+  let jsonText = extracted;
+  try {
+    JSON.parse(jsonText);
+  } catch {
+    jsonText = repairIncompleteJson(text) ?? extracted;
+  }
+
+  const parsed = JSON.parse(jsonText) as { tickets?: unknown };
+  if (!Array.isArray(parsed.tickets)) {
+    return [];
+  }
+
+  return parsed.tickets.flatMap((raw) => {
+    if (typeof raw !== "object" || raw === null) {
+      return [];
+    }
+    const item = raw as Record<string, unknown>;
+    const title = asTrimmedString(item.title, "");
+    const ids = Array.isArray(item.issueIds)
+      ? item.issueIds.filter((id): id is string => typeof id === "string" && id.trim().length > 0)
+      : [];
+    if (!title || ids.length === 0) {
+      return [];
+    }
+    const declared = asTrimmedString(item.type, "Task");
+    return [
+      {
+        title,
+        type: declared.toLowerCase() === "bug" ? "Bug" : "Task",
+        priority: asPriority(item.priority),
+        issueKeys: ids.map((id) => id.trim().toUpperCase()),
+        reason: asTrimmedString(item.reason, ""),
+      },
+    ];
+  });
+}
+
+function codeQcCatalog(issues: CodeQcIssue[]): { lines: string[]; byId: Map<string, CodeQcIssue> } {
+  const byId = new Map<string, CodeQcIssue>();
+  const lines = issues.map((issue, index) => {
+    const id = `A${index + 1}`;
+    byId.set(id, issue);
+    const line = typeof issue.line === "number" ? `:${issue.line}` : "";
+    const message = issue.message.replace(/\s+/g, " ").trim().slice(0, 140);
+    return `${id}\t${issue.type}\t${issue.severity}\t${issue.rule ?? "-"}\t${issue.component}${line}\t${message}`;
+  });
+  return { lines, byId };
+}
+
+export async function analyzeCodeQcIssues(
+  issues: CodeQcIssue[],
+): Promise<{ tickets: CodeQcGeminiTicket[]; modelUsed: string }> {
+  if (issues.length === 0) {
+    return { tickets: [], modelUsed: getOrderedModels()[0] ?? DEFAULT_MODEL };
+  }
+
+  const { lines, byId } = codeQcCatalog(issues);
+  const prompt = `Group these SonarQube issues from the repo into PMT tickets.
+
+Catalog columns: id, type, severity, rule, file, message.
+Refer to issues only by id.
+
+--- Issues ---
+${lines.join("\n")}`;
+
+  const models = getOrderedModels();
+  let lastError: GeminiError | null = null;
+
+  for (let index = 0; index < models.length; index++) {
+    const model = models[index];
+    let compact = false;
+    for (let attempt = 0; attempt < MAX_RETRIES_PER_MODEL; attempt++) {
+      const instruction = compact
+        ? `${CODE_QC_SYSTEM_PROMPT}\n${CODE_QC_COMPACT_RULES}`
+        : `${CODE_QC_SYSTEM_PROMPT}\n${OUTPUT_BUDGET_RULES}`;
+      try {
+        const raw = await streamModelText(model, prompt, instruction, {
+          compact,
+          responseSchema: CODE_QC_RESPONSE_SCHEMA,
+        });
+        if (!raw.trim()) {
+          throw new GeminiError("Gemini returned an empty CODE QC grouping.", 502, "EMPTY_RESPONSE");
+        }
+        let parsed: CodeQcGeminiTicket[] = [];
+        try {
+          parsed = parseCodeQcTickets(raw);
+        } catch {
+          throw new GeminiError(
+            "Gemini ran out of output space before finishing the CODE QC tickets.",
+            502,
+            "INCOMPLETE_JSON",
+          );
+        }
+        const byKey = new Map(issues.map((issue) => [issue.key, issue]));
+        const tickets = parsed
+          .map((ticket) => ({
+            ...ticket,
+            issueKeys: [
+              ...new Set(
+                ticket.issueKeys.flatMap((id) => {
+                  const fromCatalog = byId.get(id)?.key;
+                  if (fromCatalog) {
+                    return [fromCatalog];
+                  }
+                  return byKey.has(id) ? [id] : [];
+                }),
+              ),
+            ],
+          }))
+          .filter((ticket) => ticket.issueKeys.length > 0);
+        if (tickets.length === 0) {
+          throw new GeminiError(
+            "Gemini ran out of output space before finishing the CODE QC tickets.",
+            502,
+            "INCOMPLETE_JSON",
+          );
+        }
+        return { tickets, modelUsed: model };
+      } catch (error) {
+        const mapped = mapGeminiError(error);
+        lastError = mapped;
+        if (mapped.code === "INCOMPLETE_JSON") {
+          compact = true;
+          if (attempt < MAX_RETRIES_PER_MODEL - 1) {
+            await sleep(INITIAL_RETRY_DELAY_MS * 2 ** attempt);
+            continue;
+          }
+        }
+        if (!isRetryableError(mapped.statusCode, mapped.message, mapped.code)) {
+          throw mapped;
+        }
+        if (shouldFailFastToNextModel(mapped) || index === models.length - 1) {
+          if (index === models.length - 1) {
+            throw mapped;
+          }
+          break;
+        }
+      }
+    }
+  }
+
+  throw (
+    lastError ??
+    new GeminiError("Gemini could not group the CODE QC issues.", 503, "MODEL_OVERLOADED")
+  );
 }

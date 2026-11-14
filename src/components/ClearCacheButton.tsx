@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { quietButtonClass } from "@/components/ui-classes";
 
 function formatFreed(bytes: number): string {
   if (bytes >= 1024 * 1024) {
@@ -50,7 +51,7 @@ export function ClearCacheButton(): React.ReactNode {
       disabled={clearing}
       title="Clear the saved meeting list and people list"
       aria-label="Clear cache"
-      className="shrink-0 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+      className={quietButtonClass}
     >
       {clearing ? "Clearing…" : "Clear cache"}
     </button>

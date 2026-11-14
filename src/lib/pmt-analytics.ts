@@ -9,7 +9,7 @@ import type {
 } from "@/types/meeting";
 import type { AnalyticsRange } from "@/lib/analytics-brief";
 import { renderAgingChartBase64 } from "@/lib/analytics-chart";
-import { getPmtApiToken, getPmtBaseUrl } from "@/lib/env";
+import { getPmtApiToken, getPmtBaseUrl, getTargetUserId } from "@/lib/env";
 import { AppError } from "@/lib/errors";
 import { getTeamsAccount } from "@/lib/teams-auth";
 
@@ -120,13 +120,28 @@ export function isPmtAnalyticsReport(value: unknown): value is PmtAnalyticsRepor
   );
 }
 
-export async function listPmtBoardsForSignedInUser(): Promise<PmtBoardOption[]> {
-  const email = await signedInEmail();
-  const body = await pmtGet(`/api/integrations/boards?email=${encodeURIComponent(email)}`);
+async function listPmtBoardsForEmail(email: string): Promise<PmtBoardOption[]> {
+  const mailbox = email.trim();
+  if (!mailbox.includes("@")) {
+    throw new AppError(
+      "A mailbox email is required to list PMT boards.",
+      400,
+      "PMT_BOARD_MAILBOX",
+    );
+  }
+  const body = await pmtGet(`/api/integrations/boards?email=${encodeURIComponent(mailbox)}`);
   if (!isRecord(body) || !Array.isArray(body.boards) || !body.boards.every(isBoard)) {
     throw new AppError("PMT returned an unexpected board list.", 502, "PMT_ANALYTICS_FAILED");
   }
   return body.boards;
+}
+
+export async function listPmtBoardsForSignedInUser(): Promise<PmtBoardOption[]> {
+  return listPmtBoardsForEmail(await signedInEmail());
+}
+
+export async function listPmtBoardsForTargetUser(): Promise<PmtBoardOption[]> {
+  return listPmtBoardsForEmail(getTargetUserId());
 }
 
 export async function getPmtBoardAnalytics(

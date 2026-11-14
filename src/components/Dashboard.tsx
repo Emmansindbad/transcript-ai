@@ -14,6 +14,7 @@ import type {
 } from "@/types/meeting";
 import { AnalysisPanel } from "@/components/AnalysisPanel";
 import { AgingTicketsPanel } from "@/components/AgingTicketsPanel";
+import { CodeQcPanel } from "@/components/CodeQcPanel";
 import { PmtAnalyticsPanel } from "@/components/PmtAnalyticsPanel";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { Sidebar } from "@/components/Sidebar";
@@ -74,6 +75,11 @@ export function Dashboard(): React.ReactNode {
   const [restoredAt, setRestoredAt] = useState<string | null>(null);
   const [error, setError] = useState<ApiErrorResponse | null>(null);
   const persistTimer = useRef<number | null>(null);
+  const [workspace, setWorkspace] = useState<
+    "meetings" | "aging" | "analytics" | "code-qc"
+  >(
+    "meetings",
+  );
 
   const resetEmailState = useCallback((): void => {
     setEmailSendSuccess(false);
@@ -202,23 +208,31 @@ export function Dashboard(): React.ReactNode {
           summaryEmailRecipient?: string;
         } & ApiErrorResponse;
 
-        if (active && usersResponse.ok) {
-          const nextUsers = usersData.users ?? [];
-          setUsers(nextUsers);
-          if (usersData.summaryEmailRecipient) {
-            setEmailRecipient(usersData.summaryEmailRecipient);
-          }
-          const defaultUserId = usersData.defaultUserId;
-          const preferredUserId =
-            defaultUserId &&
-            nextUsers.some((user) => user.userPrincipalName === defaultUserId)
-              ? defaultUserId
-              : nextUsers[0]?.userPrincipalName;
-          if (preferredUserId) {
-            setSelectedUserId((current) =>
-              current === "all" ? preferredUserId : current,
-            );
-          }
+        if (!active) {
+          return;
+        }
+        if (!usersResponse.ok) {
+          setError({
+            error: usersData.error ?? "Could not load people from Microsoft 365.",
+            code: usersData.code ?? "USERS_FAILED",
+          });
+          return;
+        }
+        const nextUsers = usersData.users ?? [];
+        setUsers(nextUsers);
+        if (usersData.summaryEmailRecipient) {
+          setEmailRecipient(usersData.summaryEmailRecipient);
+        }
+        const defaultUserId = usersData.defaultUserId;
+        const preferredUserId =
+          defaultUserId &&
+          nextUsers.some((user) => user.userPrincipalName === defaultUserId)
+            ? defaultUserId
+            : nextUsers[0]?.userPrincipalName;
+        if (preferredUserId) {
+          setSelectedUserId((current) =>
+            current === "all" ? preferredUserId : current,
+          );
         }
       } catch {
         // Names stay on the last list; meetings still load only from Fetch Data.
@@ -696,6 +710,13 @@ export function Dashboard(): React.ReactNode {
     resetEmailState();
   }, [resetEmailState]);
 
+  const workspaces = [
+    { id: "meetings", label: "Meetings" },
+    { id: "aging", label: "Aging" },
+    { id: "analytics", label: "Analytics" },
+    { id: "code-qc", label: "CODE QC" },
+  ] as const;
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <ErrorBanner
@@ -704,93 +725,144 @@ export function Dashboard(): React.ReactNode {
         onDismiss={() => setError(null)}
       />
 
-      <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
-        <Sidebar
-          key={selectedUserId}
-          users={users}
-          selectedUserId={selectedUserId}
-          onUserChange={handleUserChange}
-          meetings={meetings}
-          selectedJoinUrl={selectedMeeting?.joinUrl ?? null}
-          onSelect={(meeting) => {
-            void handleSelectMeeting(meeting);
-          }}
-          onClearSelection={handleClearSelection}
-          onFetchData={() => fetchMeetings(selectedUserId)}
-          isLoadingUsers={isLoadingUsers}
-          isLoading={isLoadingMeetings}
-          hasLoadedMeetings={loadedForUserId === selectedUserId}
-          showOrganizer={selectedUserId === "all"}
-        />
+      <nav className="flex shrink-0 gap-6 border-b border-zinc-200 bg-white px-5">
+        {workspaces.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            onClick={() => setWorkspace(item.id)}
+            className={`border-b-2 py-3 text-sm transition-colors ${
+              workspace === item.id
+                ? "border-zinc-900 font-medium text-zinc-900"
+                : "border-transparent text-zinc-500 hover:text-zinc-800"
+            }`}
+          >
+            {item.label}
+          </button>
+        ))}
+      </nav>
 
-        <main className="flex min-h-0 flex-1 flex-col gap-4 p-4 lg:grid lg:grid-cols-2 lg:gap-4 lg:p-6">
-          <AgingTicketsPanel
-            teamsAccount={teamsAccount}
-            onTeamsSignIn={() => {
-              window.location.assign("/api/auth/teams/start");
+      <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
+        {workspace === "meetings" ? (
+          <Sidebar
+            key={selectedUserId}
+            users={users}
+            selectedUserId={selectedUserId}
+            onUserChange={handleUserChange}
+            meetings={meetings}
+            selectedEventId={selectedMeeting?.eventId ?? null}
+            onSelect={(meeting) => {
+              void handleSelectMeeting(meeting);
             }}
+            onClearSelection={handleClearSelection}
+            onFetchData={() => fetchMeetings(selectedUserId)}
+            isLoadingUsers={isLoadingUsers}
+            isLoading={isLoadingMeetings}
+            hasLoadedMeetings={loadedForUserId === selectedUserId}
+            showOrganizer={selectedUserId === "all"}
           />
-          <PmtAnalyticsPanel
-            teamsAccount={teamsAccount}
-            onTeamsSignIn={() => {
-              window.location.assign("/api/auth/teams/start");
-            }}
-          />
-          <TranscriptPanel
-            transcript={transcript}
-            chat={meetingChat}
-            chatStatus={chatStatus}
-            chatError={chatError}
-            isLoading={isLoadingTranscript}
-            meetingSubject={selectedMeeting?.subject ?? null}
-            recordingFallback={recordingFallback}
-            artifactDateLabel={artifactDateLabel}
-            artifactSource={artifactSource}
-          />
-          <AnalysisPanel
-            analysis={analysis}
-            actionItems={actionItems}
-            onItemsChange={handleItemsChange}
-            modelUsed={analysisModel}
-            isLoading={isAnalyzing}
-            streamPreview={streamPreview}
-            statusMessage={statusMessage}
-            hasTranscript={Boolean(transcript?.trim() || meetingChat?.trim())}
-            videoRequired={recordingFallback}
-            onGenerate={() => {
-              void handleGenerateAnalysis();
-            }}
-            onSendEmail={() => {
-              void handleSendEmail();
-            }}
-            onSendTeams={(includeIris) => {
-              void handleSendTeams(includeIris);
-            }}
-            onSendPmt={() => {
-              void handleSendPmt();
-            }}
-            onTeamsSignIn={() => {
-              window.location.assign("/api/auth/teams/start");
-            }}
-            onTeamsSignOut={() => {
-              void handleTeamsSignOut();
-            }}
-            isSendingEmail={isSendingEmail}
-            isSendingTeams={isSendingTeams}
-            emailSendSuccess={emailSendSuccess}
-            emailRecipients={emailRecipients}
-            emailRecipient={emailRecipient}
-            teamsAccount={teamsAccount}
-            teamsSummary={teamsSummary}
-            isSendingPmt={isSendingPmt}
-            pmtSummary={pmtSummary}
-            pmtItems={pmtItems}
-            includeVideo={includeVideo}
-            onToggleIncludeVideo={setIncludeVideo}
-            videoUsed={videoUsed}
-            videoNotice={videoNotice}
-            restoredAt={restoredAt}
-          />
+        ) : null}
+
+        <main
+          className={`min-h-0 flex-1 ${
+            workspace === "meetings"
+              ? "grid overflow-y-auto lg:grid-cols-2 lg:grid-rows-[minmax(0,1fr)] lg:overflow-hidden"
+              : "overflow-y-auto bg-white"
+          }`}
+        >
+          <div className={workspace === "meetings" ? "contents" : "hidden"}>
+            <TranscriptPanel
+              transcript={transcript}
+              chat={meetingChat}
+              chatStatus={chatStatus}
+              chatError={chatError}
+              isLoading={isLoadingTranscript}
+              meetingSubject={selectedMeeting?.subject ?? null}
+              recordingFallback={recordingFallback}
+              artifactDateLabel={artifactDateLabel}
+              artifactSource={artifactSource}
+            />
+            <AnalysisPanel
+              analysis={analysis}
+              actionItems={actionItems}
+              onItemsChange={handleItemsChange}
+              modelUsed={analysisModel}
+              isLoading={isAnalyzing}
+              streamPreview={streamPreview}
+              statusMessage={statusMessage}
+              hasTranscript={Boolean(transcript?.trim() || meetingChat?.trim())}
+              videoRequired={recordingFallback}
+              onGenerate={() => {
+                void handleGenerateAnalysis();
+              }}
+              onSendEmail={() => {
+                void handleSendEmail();
+              }}
+              onSendTeams={(includeIris) => {
+                void handleSendTeams(includeIris);
+              }}
+              onSendPmt={() => {
+                void handleSendPmt();
+              }}
+              onTeamsSignIn={() => {
+                window.location.assign("/api/auth/teams/start");
+              }}
+              onTeamsSignOut={() => {
+                void handleTeamsSignOut();
+              }}
+              isSendingEmail={isSendingEmail}
+              isSendingTeams={isSendingTeams}
+              emailSendSuccess={emailSendSuccess}
+              emailRecipients={emailRecipients}
+              emailRecipient={emailRecipient}
+              teamsAccount={teamsAccount}
+              teamsSummary={teamsSummary}
+              isSendingPmt={isSendingPmt}
+              pmtSummary={pmtSummary}
+              pmtItems={pmtItems}
+              includeVideo={includeVideo}
+              onToggleIncludeVideo={setIncludeVideo}
+              videoUsed={videoUsed}
+              videoNotice={videoNotice}
+              restoredAt={restoredAt}
+            />
+          </div>
+          <div
+            className={
+              workspace === "aging" ? "mx-auto w-full max-w-3xl px-6 py-8" : "hidden"
+            }
+          >
+            <AgingTicketsPanel
+              teamsAccount={teamsAccount}
+              onTeamsSignIn={() => {
+                window.location.assign("/api/auth/teams/start");
+              }}
+            />
+          </div>
+          <div
+            className={
+              workspace === "analytics" ? "mx-auto w-full max-w-3xl px-6 py-8" : "hidden"
+            }
+          >
+            <PmtAnalyticsPanel
+              teamsAccount={teamsAccount}
+              onTeamsSignIn={() => {
+                window.location.assign("/api/auth/teams/start");
+              }}
+            />
+          </div>
+          <div
+            className={
+              workspace === "code-qc" ? "mx-auto w-full max-w-5xl px-6 py-8" : "hidden"
+            }
+          >
+            <CodeQcPanel
+              teamsAccount={teamsAccount}
+              onTeamsSignIn={() => {
+                window.location.assign("/api/auth/teams/start");
+              }}
+            />
+          </div>
         </main>
       </div>
     </div>

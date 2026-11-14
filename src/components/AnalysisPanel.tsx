@@ -5,6 +5,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { MeetingActionItem, PmtTicketResult, TeamsAccountStatus } from "@/types/meeting";
 import { ActionItemsTable } from "@/components/ActionItemsTable";
+import { primaryButtonClass } from "@/components/ui-classes";
 
 interface AnalysisPanelProps {
   analysis: string | null;
@@ -78,30 +79,25 @@ function AnalysisSkeleton({
 
   return (
     <div className="space-y-4 p-6">
-      <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800">
-        <p className="font-medium">
-          Still working — {formatElapsed(elapsedSeconds)} elapsed
-        </p>
-        <p className="mt-1 text-xs text-blue-700">
-          {statusMessage || expected}
-        </p>
+      <div className="text-sm text-zinc-700">
+        <p className="font-medium">Working · {formatElapsed(elapsedSeconds)}</p>
+        <p className="mt-1 text-xs text-zinc-500">{statusMessage || expected}</p>
         {elapsedSeconds >= 180 ? (
-          <p className="mt-1 text-xs text-blue-700">
-            This is slow, but not stuck unless an error banner appears or the
-            button returns to Generate Analysis.
+          <p className="mt-1 text-xs text-zinc-500">
+            Still running. An error banner appears if it stops.
           </p>
         ) : null}
       </div>
       {streamPreview ? (
-        <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded-lg bg-slate-50 p-3 font-mono text-xs text-slate-600">
+        <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-zinc-50 p-3 font-mono text-xs text-zinc-600">
           {streamPreview.slice(-2500)}
         </pre>
       ) : (
         <div className="animate-pulse space-y-4">
-          <div className="h-5 w-1/3 rounded bg-slate-200" />
+          <div className="h-5 w-1/3 rounded bg-zinc-200" />
           <div className="space-y-2">
             {Array.from({ length: 8 }).map((_, index) => (
-              <div key={index} className="h-3 rounded bg-slate-100" />
+              <div key={index} className="h-3 rounded bg-zinc-100" />
             ))}
           </div>
         </div>
@@ -146,21 +142,19 @@ export function AnalysisPanel({
   const showActionItems = !isLoading && analysis !== null;
 
   return (
-    <section className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-      <header className="flex flex-col gap-3 border-b border-slate-200 px-5 py-4">
+    <section className="flex h-full min-h-[24rem] flex-col overflow-hidden bg-white lg:min-h-0">
+      <header className="flex flex-col gap-3 border-b border-zinc-200 px-5 py-4">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h2 className="text-base font-semibold text-slate-900">
-              AI Analysis
-            </h2>
-            <p className="mt-1 text-sm text-slate-500">
+            <h2 className="text-sm font-medium text-zinc-900">Analysis</h2>
+            <p className="mt-1 text-sm text-zinc-500">
               {modelUsed
-                ? `Analyzed with ${modelUsed}${videoUsed ? " · recording video included" : ""}`
-                : "Tries Gemini 3.8 Flash, then 3.6 Flash if that model is busy"}
+                ? `${modelUsed}${videoUsed ? " · video" : ""}`
+                : "Gemini Flash"}
             </p>
             {restoredAt ? (
-              <p className="mt-1 text-xs text-emerald-700">
-                Restored saved analysis from {new Date(restoredAt).toLocaleString()}
+              <p className="mt-1 text-xs text-zinc-400">
+                Saved {new Date(restoredAt).toLocaleString()}
               </p>
             ) : null}
           </div>
@@ -168,7 +162,7 @@ export function AnalysisPanel({
             type="button"
             onClick={onGenerate}
             disabled={!canAnalyze || isLoading}
-            className="shrink-0 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500"
+            className={`${primaryButtonClass} shrink-0`}
           >
             {isLoading
               ? includeVideo
@@ -181,64 +175,56 @@ export function AnalysisPanel({
         </div>
 
         <label
-          className={`flex items-start gap-2.5 rounded-lg border px-3 py-2.5 text-sm transition-colors ${
-            includeVideo
-              ? "border-indigo-200 bg-indigo-50"
-              : "border-slate-200 bg-slate-50"
-          } ${canAnalyze && !isLoading && !videoRequired ? "cursor-pointer" : "cursor-not-allowed opacity-60"}`}
+          className={`flex items-start gap-2.5 text-sm ${
+            canAnalyze && !isLoading && !videoRequired ? "cursor-pointer" : "cursor-not-allowed opacity-50"
+          }`}
         >
           <input
             type="checkbox"
             checked={includeVideo || videoRequired}
             disabled={!canAnalyze || isLoading || videoRequired}
             onChange={(event) => onToggleIncludeVideo(event.target.checked)}
-            className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+            className="mt-0.5 h-4 w-4 shrink-0 accent-zinc-900"
           />
           <span>
-            <span className="font-medium text-slate-800">
-              Analyze recording video
-            </span>
-            <span className="mt-0.5 block text-xs text-slate-500">
-              Triangulates transcript, chat, and on-screen content. Recordings
-              over 80 MB are skipped automatically.
+            <span className="font-medium text-zinc-800">Include the recording</span>
+            <span className="mt-0.5 block text-xs text-zinc-500">
+              Uses the video with the transcript and chat. Files over 150 MB are skipped.
             </span>
           </span>
         </label>
 
         {videoNotice ? (
-          <p className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800">
-            {videoNotice}
-          </p>
+          <p className="text-xs text-amber-800">{videoNotice}</p>
         ) : null}
       </header>
 
-      {showActionItems ? (
-        <ActionItemsTable
-          actionItems={actionItems}
-          onItemsChange={onItemsChange}
-          onSendEmail={onSendEmail}
-          onSendTeams={onSendTeams}
-          onSendPmt={onSendPmt}
-          onTeamsSignIn={onTeamsSignIn}
-          onTeamsSignOut={onTeamsSignOut}
-          isSending={isSendingEmail}
-          isSendingTeams={isSendingTeams}
-          sendSuccess={emailSendSuccess}
-          sentRecipients={emailRecipients}
-          emailRecipient={emailRecipient}
-          teamsAccount={teamsAccount}
-          teamsSummary={teamsSummary}
-          isSendingPmt={isSendingPmt}
-          pmtSummary={pmtSummary}
-          pmtLinks={pmtItems.map((item) => ({
-            number: item.number,
-            url: item.url,
-            created: item.created,
-          }))}
-        />
-      ) : null}
-
-      <div className="flex-1 overflow-y-auto">
+      <div className="analysis-scroll min-h-0 flex-1 overflow-y-scroll overscroll-contain">
+        {showActionItems ? (
+          <ActionItemsTable
+            actionItems={actionItems}
+            onItemsChange={onItemsChange}
+            onSendEmail={onSendEmail}
+            onSendTeams={onSendTeams}
+            onSendPmt={onSendPmt}
+            onTeamsSignIn={onTeamsSignIn}
+            onTeamsSignOut={onTeamsSignOut}
+            isSending={isSendingEmail}
+            isSendingTeams={isSendingTeams}
+            sendSuccess={emailSendSuccess}
+            sentRecipients={emailRecipients}
+            emailRecipient={emailRecipient}
+            teamsAccount={teamsAccount}
+            teamsSummary={teamsSummary}
+            isSendingPmt={isSendingPmt}
+            pmtSummary={pmtSummary}
+            pmtLinks={pmtItems.map((item) => ({
+              number: item.number,
+              url: item.url,
+              created: item.created,
+            }))}
+          />
+        ) : null}
         {isLoading ? (
           <AnalysisSkeleton
             includeVideo={includeVideo || videoRequired}
@@ -246,17 +232,17 @@ export function AnalysisPanel({
             streamPreview={streamPreview}
           />
         ) : analysis ? (
-          <article className="prose prose-slate max-w-none p-6 prose-headings:text-slate-900 prose-p:text-slate-700 prose-li:text-slate-700 prose-strong:text-slate-900">
+          <article className="prose prose-zinc max-w-none p-6 prose-headings:text-zinc-900 prose-p:text-zinc-700 prose-li:text-zinc-700 prose-strong:text-zinc-900">
             <ReactMarkdown remarkPlugins={[remarkGfm]}>
               {analysis}
             </ReactMarkdown>
           </article>
         ) : (
-          <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center text-sm text-slate-500">
+          <div className="flex h-full items-center justify-center p-6 text-center text-sm text-zinc-400">
             <p>
               {hasTranscript
-                ? "Click Generate Analysis to build the action items table and full meeting insights."
-                : "Select a meeting to load its transcript, then click Generate Analysis."}
+                ? "Generate an analysis when you are ready."
+                : "Select a meeting, then generate an analysis."}
             </p>
           </div>
         )}

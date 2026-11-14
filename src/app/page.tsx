@@ -5,24 +5,16 @@ import { ShutdownButton } from "@/components/ShutdownButton";
 
 export default function Home(): React.ReactNode {
   return (
-    <div className="flex min-h-screen flex-col bg-slate-100">
-      <header className="border-b border-slate-200 bg-white px-4 py-5 shadow-sm lg:px-6">
-        <div className="mx-auto flex max-w-7xl flex-col gap-1">
-          <p className="text-xs font-semibold uppercase tracking-widest text-blue-600">
-            SindbadTech
-          </p>
-          <div className="flex flex-wrap items-center gap-3">
-            <h1 className="text-2xl font-bold text-slate-900">
-              M365 Transcript AI Analyzer
-            </h1>
-            <ClearCacheButton />
-            <ShutdownButton />
-          </div>
-          <p className="text-sm text-slate-500">
-            Fetch Teams transcripts, chat, and recordings from Microsoft Graph
-            and turn them into tickets with Gemini 3.8 Flash.
-          </p>
+    <div className="flex min-h-screen flex-col bg-zinc-100 text-zinc-900 lg:h-screen lg:overflow-hidden">
+      <header className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-b border-zinc-200 bg-white px-4 py-3 sm:px-5">
+        <div className="min-w-0">
+          <p className="text-xs text-zinc-400">Sindbad</p>
+          <h1 className="text-sm font-semibold tracking-tight">Transcript analyzer</h1>
+        </div>
+        <div className="flex items-center gap-1">
           <HealthPanel />
+          <ClearCacheButton />
+          <ShutdownButton />
         </div>
       </header>
 
