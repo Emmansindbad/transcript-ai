@@ -3,9 +3,15 @@
 import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { MeetingActionItem, PmtTicketResult, TeamsAccountStatus } from "@/types/meeting";
+import type {
+  MeetingActionItem,
+  PmtBoardOption,
+  PmtTicketResult,
+  TeamsAccountStatus,
+  TenantUser,
+} from "@/types/meeting";
 import { ActionItemsTable } from "@/components/ActionItemsTable";
-import { primaryButtonClass } from "@/components/ui-classes";
+import { fieldClass, labelClass, primaryButtonClass } from "@/components/ui-classes";
 
 interface AnalysisPanelProps {
   analysis: string | null;
@@ -38,6 +44,16 @@ interface AnalysisPanelProps {
   videoUsed?: boolean;
   videoNotice?: string | null;
   restoredAt?: string | null;
+  filingNote?: string;
+  pmtActionLabel?: string;
+  pmtBusyLabel?: string;
+  destinations: PmtBoardOption[];
+  destinationId: string;
+  onDestinationChange: (id: string) => void;
+  destinationsLoading: boolean;
+  destinationsError: string | null;
+  destinationKind: "board" | "sheet";
+  directoryUsers?: TenantUser[];
 }
 
 function formatElapsed(seconds: number): string {
@@ -137,6 +153,16 @@ export function AnalysisPanel({
   videoUsed,
   videoNotice,
   restoredAt,
+  filingNote,
+  pmtActionLabel,
+  pmtBusyLabel,
+  destinations,
+  destinationId,
+  onDestinationChange,
+  destinationsLoading,
+  destinationsError,
+  destinationKind,
+  directoryUsers = [],
 }: AnalysisPanelProps): React.ReactNode {
   const canAnalyze = hasTranscript || videoRequired;
   const showActionItems = !isLoading && analysis !== null;
@@ -152,6 +178,36 @@ export function AnalysisPanel({
                 ? `${modelUsed}${videoUsed ? " · video" : ""}`
                 : "Gemini Flash"}
             </p>
+            {filingNote ? (
+              <p className="mt-1 text-xs text-zinc-500">{filingNote}</p>
+            ) : null}
+            <label className="mt-3 block max-w-sm">
+              <span className={labelClass}>
+                {destinationKind === "sheet" ? "Sheet" : "Board"}
+              </span>
+              <select
+                className={`${fieldClass} mt-1 w-full`}
+                value={destinationId}
+                disabled={destinationsLoading || isSendingPmt}
+                onChange={(event) => onDestinationChange(event.target.value)}
+              >
+                <option value="">
+                  {destinationsLoading
+                    ? "Loading…"
+                    : destinationKind === "sheet"
+                      ? "Choose a sheet"
+                      : "Choose a board"}
+                </option>
+                {destinations.map((item) => (
+                  <option key={item.id} value={String(item.id)}>
+                    {item.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {destinationsError ? (
+              <p className="mt-1 text-xs text-red-700">{destinationsError}</p>
+            ) : null}
             {restoredAt ? (
               <p className="mt-1 text-xs text-zinc-400">
                 Saved {new Date(restoredAt).toLocaleString()}
@@ -223,6 +279,10 @@ export function AnalysisPanel({
               url: item.url,
               created: item.created,
             }))}
+            pmtActionLabel={pmtActionLabel}
+            pmtBusyLabel={pmtBusyLabel}
+            pmtReady={destinationId !== ""}
+            directoryUsers={directoryUsers}
           />
         ) : null}
         {isLoading ? (

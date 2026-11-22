@@ -7,6 +7,9 @@ export interface TenantUser {
 
 export type ChatFetchStatus = "ok" | "empty" | "forbidden" | "unavailable";
 
+/** Development tickets follow the meeting title. Sheets tickets are non-development work. */
+export type TicketLane = "development" | "sheets";
+
 export type ProbeStatus = "ok" | "denied" | "missing" | "unknown" | "failed";
 
 export interface MeetingListResult {
@@ -89,6 +92,8 @@ export interface MeetingActionItem {
   relatedTo: string;
   description: string;
   evidence: ActionItemEvidence[];
+  /** Where Create Ticket sends this item. Omitted items are development tickets. */
+  lane?: TicketLane;
   pmtUrl?: string;
   pmtNumber?: number;
 }

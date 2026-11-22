@@ -61,7 +61,7 @@ async function signedInEmail(): Promise<string> {
   return email;
 }
 
-async function pmtGet(path: string): Promise<unknown> {
+async function pmtGet(path: string, routeMissingMessage?: string): Promise<unknown> {
   let token: string;
   try {
     token = getPmtApiToken();
@@ -85,9 +85,10 @@ async function pmtGet(path: string): Promise<unknown> {
     const message = isRecord(body) && typeof body.message === "string" ? body.message : "";
     if (!message || /could not be found/i.test(message)) {
       throw new AppError(
-        "PMT analytics is not on the server yet. Deploy the analytics read API, then try again.",
+        routeMissingMessage ??
+          "PMT analytics is not on the server yet. Deploy the analytics read API, then try again.",
         response.status === 404 ? 404 : 502,
-        "PMT_ANALYTICS_UNAVAILABLE",
+        routeMissingMessage ? "PMT_SHEETS_UNAVAILABLE" : "PMT_ANALYTICS_UNAVAILABLE",
       );
     }
     throw new AppError(message, response.status, "PMT_ANALYTICS_FAILED");
@@ -134,6 +135,47 @@ async function listPmtBoardsForEmail(email: string): Promise<PmtBoardOption[]> {
     throw new AppError("PMT returned an unexpected board list.", 502, "PMT_ANALYTICS_FAILED");
   }
   return body.boards;
+}
+
+async function listPmtSheetsForEmail(email: string): Promise<PmtBoardOption[]> {
+  const mailbox = email.trim();
+  if (!mailbox.includes("@")) {
+    throw new AppError(
+      "A mailbox email is required to list PMT sheets.",
+      400,
+      "PMT_BOARD_MAILBOX",
+    );
+  }
+  const body = await pmtGet(
+    `/api/integrations/sheets?email=${encodeURIComponent(mailbox)}`,
+    "PMT cannot list sheets yet. Deploy the sheets integration, then try again.",
+  );
+  if (!isRecord(body) || !Array.isArray(body.sheets) || !body.sheets.every(isBoard)) {
+    throw new AppError("PMT returned an unexpected sheet list.", 502, "PMT_ANALYTICS_FAILED");
+  }
+  return body.sheets;
+}
+
+export async function meetingPmtViewerEmail(): Promise<string> {
+  try {
+    return await signedInEmail();
+  } catch (error) {
+    const target = getTargetUserId();
+    if (target.includes("@")) {
+      return target;
+    }
+    throw error;
+  }
+}
+
+export async function listMeetingDestinations(
+  lane: "development" | "sheets",
+): Promise<PmtBoardOption[]> {
+  const email = await meetingPmtViewerEmail();
+  if (lane === "sheets") {
+    return listPmtSheetsForEmail(email);
+  }
+  return listPmtBoardsForEmail(email);
 }
 
 export async function listPmtBoardsForSignedInUser(): Promise<PmtBoardOption[]> {

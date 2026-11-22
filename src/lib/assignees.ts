@@ -1,5 +1,3 @@
-import "server-only";
-
 import type { TenantUser } from "@/types/meeting";
 
 function normalizeName(value: string): string {
@@ -117,28 +115,10 @@ export function directoryEmail(user: TenantUser): string {
   return user.userPrincipalName.trim();
 }
 
-export function resolveDirectoryAssignee(
-  pointPerson: string,
-  storedUpn: string | undefined,
+function personFromMatch(
+  matched: { displayName: string; userPrincipalName: string },
   users: TenantUser[],
-): { displayName: string; email: string } | null {
-  const stored = storedUpn?.trim() ?? "";
-  if (stored.includes("@")) {
-    const known = users.find(
-      (user) =>
-        user.userPrincipalName.toLowerCase() === stored.toLowerCase() ||
-        user.mail?.toLowerCase() === stored.toLowerCase(),
-    );
-    return {
-      displayName: known?.displayName ?? pointPerson.trim(),
-      email: known ? directoryEmail(known) : stored,
-    };
-  }
-
-  const matched = matchAssignee(pointPerson, users);
-  if (!matched) {
-    return null;
-  }
+): { displayName: string; email: string } {
   const user = users.find(
     (candidate) =>
       candidate.userPrincipalName.toLowerCase() === matched.userPrincipalName.toLowerCase(),
@@ -147,6 +127,48 @@ export function resolveDirectoryAssignee(
     return { displayName: matched.displayName, email: matched.userPrincipalName };
   }
   return { displayName: user.displayName, email: directoryEmail(user) };
+}
+
+export function resolveDirectoryAssignee(
+  pointPerson: string,
+  storedUpn: string | undefined,
+  users: TenantUser[],
+): { displayName: string; email: string } | null {
+  const matched = matchAssignee(pointPerson, users);
+  if (matched) {
+    return personFromMatch(matched, users);
+  }
+
+  const typed = pointPerson.trim();
+  if (typed && !/^(unassigned|tbd|none)$/i.test(typed)) {
+    return null;
+  }
+
+  const stored = storedUpn?.trim() ?? "";
+  if (!stored.includes("@")) {
+    return null;
+  }
+  const known = users.find(
+    (user) =>
+      user.userPrincipalName.toLowerCase() === stored.toLowerCase() ||
+      user.mail?.toLowerCase() === stored.toLowerCase(),
+  );
+  return {
+    displayName: known?.displayName ?? stored,
+    email: known ? directoryEmail(known) : stored,
+  };
+}
+
+export function assigneeFieldsForName(
+  pointPerson: string,
+  users: TenantUser[],
+): { pointPerson: string; assigneeUpn: string; assigneeDisplayName: string } {
+  const resolved = resolveDirectoryAssignee(pointPerson, undefined, users);
+  return {
+    pointPerson,
+    assigneeUpn: resolved?.email ?? "",
+    assigneeDisplayName: resolved?.displayName ?? "",
+  };
 }
 
 export function applyAssigneeMatches<T extends { pointPerson: string }>(

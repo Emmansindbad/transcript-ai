@@ -18,11 +18,13 @@ interface SidebarProps {
   selectedEventId: string | null;
   onSelect: (meeting: MeetingSummary) => void;
   onClearSelection?: () => void;
-  onFetchData: () => Promise<void>;
+  onFetchData: (date: string) => Promise<void>;
   isLoading: boolean;
   isLoadingUsers: boolean;
   hasLoadedMeetings: boolean;
   showOrganizer: boolean;
+  heading?: string;
+  note?: string;
 }
 
 type SortOption = "date-desc" | "date-asc" | "name-asc" | "name-desc";
@@ -133,6 +135,8 @@ export function Sidebar({
   isLoadingUsers,
   hasLoadedMeetings,
   showOrganizer,
+  heading = "Meetings",
+  note,
 }: SidebarProps): React.ReactNode {
   const [selectedDate, setSelectedDate] = useState("");
   const [selectedMeetingSubject, setSelectedMeetingSubject] = useState("");
@@ -198,10 +202,13 @@ export function Sidebar({
     onClearSelection?.();
   }
 
+  const everyone = !isLoadingUsers && users.length > 0 && selectedUserId === "all";
+  const needsDate = everyone && !selectedDate;
+
   async function handleFetchData(): Promise<void> {
     setIsBrowsePending(true);
     try {
-      await onFetchData();
+      await onFetchData(selectedDate);
     } finally {
       setIsBrowsePending(false);
     }
@@ -211,21 +218,33 @@ export function Sidebar({
     <aside className="flex w-full shrink-0 flex-col border-b border-zinc-200 bg-zinc-50 lg:h-full lg:w-72 lg:border-r lg:border-b-0">
       <div className="space-y-3 border-b border-zinc-200 px-4 py-4">
         <div className="flex items-baseline justify-between gap-3">
-          <h2 className="text-sm font-medium text-zinc-900">Meetings</h2>
-          <p className="text-xs text-zinc-400">Last 30 days</p>
+          <h2 className="text-sm font-medium text-zinc-900">{heading}</h2>
+          <p className="text-xs text-zinc-400">
+            {selectedDate
+              ? formatDateLabel(selectedDate)
+              : everyone
+                ? "Pick a date"
+                : "Last 30 days"}
+          </p>
         </div>
+        {note ? <p className="text-xs leading-5 text-zinc-500">{note}</p> : null}
 
         <button
           type="button"
           onClick={() => {
             void handleFetchData();
           }}
-          disabled={isBrowseLoading || isLoadingUsers || selectedUserId === "all"}
+          disabled={isBrowseLoading || isLoadingUsers || needsDate}
           className={`${primaryButtonClass} w-full gap-2`}
         >
           {isBrowseLoading ? <LoadingSpinner className="h-4 w-4 text-white" /> : null}
           Fetch data
         </button>
+        {needsDate ? (
+          <p className="text-xs leading-5 text-zinc-500">
+            Choose a date to load every recorded meeting that day.
+          </p>
+        ) : null}
 
         <label className="block">
           <span className={labelClass}>Person</span>
@@ -240,6 +259,9 @@ export function Sidebar({
             ) : null}
             {!isLoadingUsers && users.length === 0 ? (
               <option value="all">No people found</option>
+            ) : null}
+            {!isLoadingUsers && users.length > 0 ? (
+              <option value="all">Everyone</option>
             ) : null}
             {users.map((user) => (
               <option key={user.id} value={user.userPrincipalName}>
@@ -325,7 +347,11 @@ export function Sidebar({
             aria-live="polite"
           >
             <LoadingSpinner className="h-4 w-4 shrink-0" />
-            <span>Loading meetings from Microsoft Graph…</span>
+            <span>
+              {everyone
+                ? "Loading every recorded meeting for that day…"
+                : "Loading meetings from Microsoft Graph…"}
+            </span>
           </div>
         ) : null}
       </div>
@@ -334,19 +360,31 @@ export function Sidebar({
         {isBrowseLoading ? (
           <div className="flex flex-col items-center justify-center gap-3 p-8 text-sm text-zinc-500">
             <LoadingSpinner className="h-8 w-8" />
-            <p>Fetching meetings with transcripts…</p>
+            <p>
+              {everyone
+                ? "Fetching recorded meetings for the selected day…"
+                : selectedDate
+                  ? "Fetching recorded meetings for that day…"
+                  : "Fetching meetings with transcripts…"}
+            </p>
           </div>
         ) : !hasLoadedMeetings ? (
           <div className="p-4 text-sm text-zinc-500">
-            Fetch data to load the last 30 days.
+            {everyone
+              ? "Choose a date, then fetch every recorded meeting that day."
+              : "Fetch data to load the last 30 days, or pick a date first."}
           </div>
         ) : hasLoadedMeetings && meetings.length === 0 ? (
           <div className="p-4 text-sm text-zinc-500">
-            No meetings with transcripts in the last 30 days.
+            {selectedDate
+              ? "No recorded meetings on this day."
+              : "No meetings with a transcript or recording in the last 30 days."}
           </div>
         ) : visibleMeetings.length === 0 ? (
           <div className="p-4 text-sm text-zinc-500">
-            Nothing matches these filters.
+            {selectedDate
+              ? "No meetings on this day in the last fetch. Fetch data again for this date."
+              : "Nothing matches these filters."}
           </div>
         ) : (
           <>

@@ -63,6 +63,18 @@ export function formatKsaDateTime(value: string | Date): string {
   return `${formatted} KSA`;
 }
 
+/** Inclusive KSA calendar day as a UTC window. KSA is UTC+3 and does not use daylight saving. */
+export function ksaDayUtcRange(dateKey: string): { start: Date; end: Date } | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) {
+    return null;
+  }
+  const start = new Date(`${dateKey}T00:00:00+03:00`);
+  if (Number.isNaN(start.getTime())) {
+    return null;
+  }
+  return { start, end: new Date(start.getTime() + 24 * 60 * 60 * 1000) };
+}
+
 export function getKsaDateRangeBounds(daysBack = 30): {
   min: string;
   max: string;

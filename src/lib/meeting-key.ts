@@ -27,8 +27,12 @@ export function isSameMeeting(
   return left.joinUrl === right.joinUrl && left.start === right.start;
 }
 
-const MEETING_LIST_CACHE_VERSION = 3;
+const MEETING_LIST_CACHE_VERSION = 4;
 
-export function meetingListCacheKey(userId: string, daysBack: number): string {
-  return `meetings:v${MEETING_LIST_CACHE_VERSION}:${userId}:${daysBack}`;
+export function meetingListCacheKey(
+  userId: string,
+  daysBack: number,
+  dateKey = "",
+): string {
+  return `meetings:v${MEETING_LIST_CACHE_VERSION}:${userId}:${daysBack}:${dateKey}`;
 }

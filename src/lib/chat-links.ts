@@ -76,17 +76,116 @@ export function imageLinkTitle(name: string): string {
   return cleaned.slice(0, 80);
 }
 
+const GENERIC_SOURCE_TITLE =
+  /^(chat message|link|message|teams message|screenshot in chat|screenshot|image|photo|picture|pic)$/i;
+
+export function isGenericSourceTitle(title: string): boolean {
+  return GENERIC_SOURCE_TITLE.test(title.trim());
+}
+
+function isVisualLinkTitle(title: string): boolean {
+  return IMAGE_NAME.test(title) || /\b(screenshot|image|photo|picture|attachment)\b/i.test(title);
+}
+
+function isTeamsMessagePermalink(url: string): boolean {
+  const href = toTeamsMessagePermalink(url);
+  try {
+    const parsed = new URL(href);
+    return TEAMS_HOST.test(parsed.hostname) && TEAMS_MESSAGE_PATH.test(parsed.pathname);
+  } catch {
+    return false;
+  }
+}
+
+function collapseSourceSpacing(text: string): string {
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.replace(/[ \t]{2,}/g, " ").trimEnd())
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function markdownLinkPattern(): RegExp {
+  return new RegExp(MARKDOWN_LINK.source, "g");
+}
+
+interface FoundMarkdownLink {
+  index: number;
+  length: number;
+  title: string;
+  url: string;
+  teams: boolean;
+}
+
+function findMarkdownLinks(text: string): FoundMarkdownLink[] {
+  const found: FoundMarkdownLink[] = [];
+  const matcher = markdownLinkPattern();
+  let match = matcher.exec(text);
+  while (match) {
+    const title = match[1]?.trim() ?? "";
+    const url = match[2]?.trim() ?? "";
+    if (title && isSafeHttpUrl(url)) {
+      found.push({
+        index: match.index,
+        length: match[0].length,
+        title,
+        url: toTeamsMessagePermalink(url),
+        teams: isTeamsMessagePermalink(url),
+      });
+    }
+    match = matcher.exec(text);
+  }
+  return found;
+}
+
+/**
+ * Tickets keep one Teams source link. A named screenshot or file the ticket
+ * actually mentions wins. Otherwise the first source link stays, and every
+ * extra "Chat message" link is removed. Links that are not Teams messages stay.
+ */
+export function retainCrucialSourceLinks(text: string): string {
+  if (!text.trim()) {
+    return "";
+  }
+  const rewritten = rewriteTeamsPermalinks(text);
+  const found = findMarkdownLinks(rewritten);
+  const teams = found.filter((link) => link.teams);
+  const withoutLinks = rewritten.replace(markdownLinkPattern(), " ");
+  const named = teams.find((link) => {
+    if (isGenericSourceTitle(link.title)) {
+      return false;
+    }
+    const needle = normalize(imageLinkTitle(link.title));
+    return needle.length >= 6 && normalize(withoutLinks).includes(needle);
+  });
+  const winner = named ?? teams[0];
+
+  let result = "";
+  let cursor = 0;
+  for (const link of found) {
+    const keep = !link.teams || link === winner;
+    result += rewritten.slice(cursor, link.index);
+    if (keep) {
+      result += markdownLink(link.title, link.url);
+    }
+    cursor = link.index + link.length;
+  }
+  result += rewritten.slice(cursor);
+  return collapseSourceSpacing(result);
+}
+
 export function formatChatSourceLinks(webUrl: string, images: string[]): string {
   if (!isSafeHttpUrl(webUrl)) {
     return "";
   }
-  if (images.length > 0) {
-    return images
-      .map((name) => markdownLink(imageLinkTitle(name), webUrl))
-      .filter(Boolean)
-      .join(" ");
+  if (images.length === 0) {
+    return markdownLink("Chat message", webUrl);
   }
-  return markdownLink("Chat message", webUrl);
+  const named = images
+    .map((name) => imageLinkTitle(name))
+    .find((title) => !isGenericSourceTitle(title));
+  return markdownLink(named || "Screenshot in chat", webUrl);
 }
 
 export function isImageAttachmentName(name: string, contentType?: string): boolean {
@@ -107,7 +206,7 @@ function escapeHtml(text: string): string {
 
 export function renderMarkdownLinksAsHtml(text: string): string {
   const parts: string[] = [];
-  const matcher = new RegExp(MARKDOWN_LINK.source, "g");
+  const matcher = markdownLinkPattern();
   let last = 0;
   let match = matcher.exec(text);
   while (match) {
@@ -125,7 +224,7 @@ export function renderMarkdownLinksAsHtml(text: string): string {
 export function extractMarkdownLinks(text: string): Array<{ title: string; url: string }> {
   const links: Array<{ title: string; url: string }> = [];
   const seen = new Set<string>();
-  const matcher = new RegExp(MARKDOWN_LINK.source, "g");
+  const matcher = markdownLinkPattern();
   let match = matcher.exec(text);
   while (match) {
     const title = match[1]?.trim() ?? "";
@@ -167,7 +266,7 @@ function parseFormattedChat(chat: string): ParsedChatLine[] {
       const speaker = speakerMatch?.[1]?.trim() ?? "";
       const afterSpeaker = speakerMatch ? line.slice(line.indexOf(speakerMatch[0]) + speakerMatch[0].length) : line;
       const links = extractMarkdownLinks(line).map((link) => markdownLink(link.title, link.url));
-      const text = afterSpeaker.replace(MARKDOWN_LINK, "").replace(/\s+/g, " ").trim();
+      const text = afterSpeaker.replace(markdownLinkPattern(), "").replace(/\s+/g, " ").trim();
       return { speaker, text, links };
     })
     .filter((line) => line.links.length > 0);
@@ -177,14 +276,15 @@ function normalize(value: string): string {
   return value.toLowerCase().replace(/\s+/g, " ").trim();
 }
 
-function lineMatchesItem(line: ParsedChatLine, item: ParsedActionItem): boolean {
+function lineMatchScore(line: ParsedChatLine, item: ParsedActionItem): number {
   const hay = normalize(
     `${item.title} ${item.task} ${item.description} ${item.evidence.map((entry) => entry.quote).join(" ")}`,
   );
+  let score = 0;
   if (line.text) {
     const snippet = normalize(line.text).slice(0, 48);
-    if (snippet.length >= 12 && hay.includes(snippet)) {
-      return true;
+    if (snippet.length >= 20 && hay.includes(snippet)) {
+      score += 5;
     }
   }
 
@@ -198,27 +298,64 @@ function lineMatchesItem(line: ParsedChatLine, item: ParsedActionItem): boolean 
       !evidence.speaker.trim() ||
       !line.speaker ||
       normalize(evidence.speaker) === normalize(line.speaker);
-    if (speakerMatch && line.text && (normalize(line.text).includes(quoteSnippet) || quote.includes(normalize(line.text).slice(0, 36)))) {
-      return true;
+    const lineText = normalize(line.text);
+    if (
+      speakerMatch &&
+      lineText &&
+      quoteSnippet.length >= 12 &&
+      (lineText.includes(quoteSnippet) || quote.includes(lineText.slice(0, 36)))
+    ) {
+      score += 8;
     }
   }
 
   for (const link of line.links) {
     const title = extractMarkdownLinks(link)[0]?.title ?? "";
+    if (isGenericSourceTitle(title) || isGenericSourceTitle(imageLinkTitle(title))) {
+      continue;
+    }
     const needle = normalize(imageLinkTitle(title));
     if (needle.length >= 6 && hay.includes(needle)) {
-      return true;
+      score += 6;
     }
   }
 
   const mentionsVisual = /\b(screenshot|image|photo|attached|attachment|picture|pic)\b/i.test(hay);
-  if (mentionsVisual && line.links.some((link) => /screenshot|image|\.(png|jpe?g|gif|webp)/i.test(link))) {
-    return item.evidence.some(
+  if (
+    mentionsVisual &&
+    line.links.some((link) => isVisualLinkTitle(extractMarkdownLinks(link)[0]?.title ?? "")) &&
+    item.evidence.some(
       (entry) => entry.speaker.trim() && normalize(entry.speaker) === normalize(line.speaker),
-    );
+    )
+  ) {
+    score += 4;
   }
 
-  return false;
+  return score;
+}
+
+function bestMatchingLine(lines: ParsedChatLine[], item: ParsedActionItem): ParsedChatLine | null {
+  let best: ParsedChatLine | null = null;
+  let bestScore = 0;
+  for (const line of lines) {
+    const score = lineMatchScore(line, item);
+    if (score > bestScore) {
+      best = line;
+      bestScore = score;
+    }
+  }
+  return best;
+}
+
+function preferredLineLink(line: ParsedChatLine): string {
+  const visual = line.links.find((link) =>
+    isVisualLinkTitle(extractMarkdownLinks(link)[0]?.title ?? ""),
+  );
+  return visual ?? line.links[0] ?? "";
+}
+
+function descriptionHasTeamsLink(description: string): boolean {
+  return extractMarkdownLinks(description).some((link) => isTeamsMessagePermalink(link.url));
 }
 
 export function attachChatSourceLinks(
@@ -226,15 +363,16 @@ export function attachChatSourceLinks(
   chat: string,
 ): ParsedActionItem[] {
   const lines = parseFormattedChat(chat);
-  if (lines.length === 0) {
-    return items;
-  }
 
   return items.map((item) => {
-    const links = lines.filter((line) => lineMatchesItem(line, item)).flatMap((line) => line.links);
-    const description = rewriteTeamsPermalinks(
-      links.length > 0 ? appendSourceLinks(item.description, links) : item.description,
-    );
+    let description = retainCrucialSourceLinks(item.description);
+    if (!descriptionHasTeamsLink(description)) {
+      const best = bestMatchingLine(lines, item);
+      const link = best ? preferredLineLink(best) : "";
+      if (link) {
+        description = retainCrucialSourceLinks(appendSourceLinks(description, [link]));
+      }
+    }
     if (description === item.description) {
       return item;
     }

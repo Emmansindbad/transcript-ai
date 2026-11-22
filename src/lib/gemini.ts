@@ -87,7 +87,7 @@ Ticket field rules:
 - relatedTo: related feature, use case, epic, or meeting topic if mentioned, otherwise "None".
 - description: full ticket body. At least two sentences or a numbered list. Include context, who is affected, trigger/acceptance criteria, and every figure, threshold, or date from the source. Use line breaks. Do not paste the title.
 - evidence: 1–2 short quotes from the spoken transcript or chat that ground the ticket. Copy timestamp and speaker from lines like "[00:12:04] Name: ...". If no timestamp exists, use "".
-- SOURCE LINKS: Meeting chat lines may already include Teams permalinks as markdown, e.g. [Chat message](https://teams.cloud.microsoft/l/message/...) or [screenshot.png](https://teams.cloud.microsoft/l/message/...). When a ticket is grounded in that chat message, or an image/screenshot attached there is the evidence, copy the exact [title](url) onto its own line at the end of description. Use a short accurate title (file name, "Screenshot in chat", or "Chat message"). Only add a link when it is necessary and traceable to that ticket. Never invent a URL. Never put links in the title. Never use teams.microsoft.com/dl/launcher URLs.
+- SOURCE LINKS: Add at most ONE Teams permalink, on its own line at the end of the description. Pick the single most useful source for that ticket: a named screenshot or file when that image is the evidence, otherwise the one chat message that best grounds the ticket. Label a file with its name or "Screenshot in chat". Label a plain message "Chat message". Do not add a link per chat line, and do not repeat a URL. Transcript-only tickets get no link. Never invent a URL. Never put links in the title. Never use teams.microsoft.com/dl/launcher URLs.
 - If there is truly no work, return "actionItems": []
 
 The "analysis" string is markdown for THIS meeting. Do not paste the JSON tickets again.
@@ -876,6 +876,7 @@ export interface MeetingAnalysisSource {
   meetingDate?: string;
   artifactDateLabel?: string;
   artifactSource?: string;
+  lane?: "development" | "sheets";
 }
 
 function buildMeetingAnalysisPrompt(source: MeetingAnalysisSource): string {
@@ -896,7 +897,16 @@ Calendar event: ${meetingDate}
 Comparison day: ${artifactDate}
 Day source: KSA calendar date when the ${artifactSource} was created.
 
-Read the spoken transcript AND the meeting chat. Compare them for redundancy on that KSA day only.
+${
+    source.lane === "sheets"
+      ? `These tickets are non-development work. The person filing them chooses a PMT sheet. Sheets do not use a dev tag or a software board.
+- Capture operational, business, research, coordination, and follow-up work.
+- Set devTag to "None".
+- Set relatedTo to the meeting or business topic when one is named. The sheet stores that in the row notes.
+
+`
+      : ""
+  }Read the spoken transcript AND the meeting chat. Compare them for redundancy on that KSA day only.
 - Extract work from both sources.
 - If the same action appears in both, create ONE ticket and say it was repeated.
 - Still capture chat-only and transcript-only work.
@@ -904,7 +914,7 @@ Read the spoken transcript AND the meeting chat. Compare them for redundancy on 
 - Identify each item as Task or Bug.
 - Keep title and description different: the title is a short headline for the description.
 - Ground each ticket with evidence quotes and timestamps from lines like "[00:12:04] Speaker: ...".
-- If a chat line includes a markdown [title](url) permalink or image link and the ticket comes from that message or image, put that same [title](url) at the end of the description. Use teams.cloud.microsoft/l/message links only, never launcher.html.
+- If one chat line or its image is the evidence for a ticket, put that single [title](url) at the end of the description. Never copy more than one permalink onto a ticket. Use teams.cloud.microsoft/l/message links only, never launcher.html.
 
 --- Spoken transcript ---
 ${transcript}

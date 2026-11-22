@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { MeetingActionItem, SavedAnalysis } from "@/types/meeting";
+import { retainCrucialSourceLinks } from "@/lib/chat-links";
 import { applyFiledState, getSavedAnalysis, saveAnalysis } from "@/lib/store";
 import { listFiledKeys } from "@/lib/store";
 import {
@@ -27,7 +28,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({
       analysis: {
         ...saved,
-        actionItems: applyFiledState(saved.actionItems, filedKeys),
+        actionItems: applyFiledState(saved.actionItems, filedKeys).map((item) => ({
+          ...item,
+          description: retainCrucialSourceLinks(item.description),
+        })),
       } satisfies SavedAnalysis,
     });
   } catch (error) {
@@ -63,7 +67,10 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
     const saved = await saveAnalysis({
       meetingKey: body.meetingKey.trim(),
       analysis: body.analysis ?? "",
-      actionItems: body.actionItems,
+      actionItems: body.actionItems.map((item) => ({
+        ...item,
+        description: retainCrucialSourceLinks(item.description),
+      })),
       modelUsed: body.modelUsed,
       videoUsed: body.videoUsed,
       videoNotice: body.videoNotice,

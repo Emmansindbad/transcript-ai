@@ -6,7 +6,7 @@ import { normalizeDevTag } from "@/lib/dev-tags";
 import { getTargetUserId, getSummaryEmailRecipient } from "@/lib/env";
 import { AppError, GraphError } from "@/lib/errors";
 import { getGraphClient, mapGraphError, resetGraphAuthCache } from "@/lib/m365";
-import { renderMarkdownLinksAsHtml } from "@/lib/chat-links";
+import { renderMarkdownLinksAsHtml, retainCrucialSourceLinks } from "@/lib/chat-links";
 import { assertPmtLinks } from "@/lib/pmt";
 
 export interface EmailSendResult {
@@ -47,7 +47,7 @@ function titleBox(item: MeetingActionItem): string {
 }
 
 function renderDescription(text: string): string {
-  return renderMarkdownLinksAsHtml(text).replace(
+  return renderMarkdownLinksAsHtml(retainCrucialSourceLinks(text)).replace(
     /<a href="/g,
     '<a style="color:#4338ca;font-weight:600;" href="',
   );

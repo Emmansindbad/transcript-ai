@@ -22,6 +22,7 @@ import { GraphError } from "@/lib/errors";
 import {
   formatKsaDateTime,
   getKsaDateKey,
+  ksaDayUtcRange,
   parseGraphDate,
 } from "@/lib/ksa-time";
 import { meetingListCacheKey } from "@/lib/meeting-key";
@@ -81,6 +82,7 @@ interface GraphCalendarEvent {
 
 interface GraphCalendarViewResponse {
   value?: GraphCalendarEvent[];
+  "@odata.nextLink"?: string;
 }
 
 interface GraphOnlineMeeting {
@@ -881,28 +883,50 @@ export async function getRecentMeetings(
   userId: string,
   daysBack = 30,
   userDisplayName = userId,
+  range?: { start: Date; end: Date },
 ): Promise<MeetingSummary[]> {
   const client = getGraphClient();
-  const endDate = new Date();
-  const startDate = new Date();
-  startDate.setDate(startDate.getDate() - daysBack);
+  const endDate = range?.end ?? new Date();
+  const startDate = range?.start ?? new Date(endDate);
+  if (!range) {
+    startDate.setDate(startDate.getDate() - daysBack);
+  }
 
   try {
-    const response = (await client
-      .api(`/users/${userId}/calendarView`)
-      .query({
-        startDateTime: startDate.toISOString(),
-        endDateTime: endDate.toISOString(),
-      })
-      .header("Prefer", 'outlook.timezone="UTC"')
-      .select("id,subject,start,end,isOnlineMeeting,onlineMeeting,seriesMasterId")
-      .orderby("start/dateTime desc")
-      .top(50)
-      .get()) as GraphCalendarViewResponse;
+    const events: GraphCalendarEvent[] = [];
+    let nextPath = "";
+    let firstPage = true;
+    while ((firstPage || nextPath) && events.length < 500) {
+      const response = (
+        firstPage
+          ? await client
+              .api(`/users/${userId}/calendarView`)
+              .query({
+                startDateTime: startDate.toISOString(),
+                endDateTime: endDate.toISOString(),
+              })
+              .header("Prefer", 'outlook.timezone="UTC"')
+              .select(
+                "id,subject,start,end,isOnlineMeeting,onlineMeeting,seriesMasterId",
+              )
+              .orderby("start/dateTime desc")
+              .top(100)
+              .get()
+          : await client
+              .api(nextPath)
+              .header("Prefer", 'outlook.timezone="UTC"')
+              .get()
+      ) as GraphCalendarViewResponse;
+      firstPage = false;
+      events.push(...(response.value ?? []));
+      nextPath = response["@odata.nextLink"]
+        ? toGraphApiPath(response["@odata.nextLink"])
+        : "";
+    }
 
     const meetings: MeetingSummary[] = [];
 
-    for (const event of response.value ?? []) {
+    for (const event of events) {
       const joinUrl = event.onlineMeeting?.joinUrl;
       if (!event.isOnlineMeeting || !joinUrl || !event.id) {
         continue;
@@ -1032,15 +1056,17 @@ function latestArtifact<T extends { createdDateTime: string }>(
 async function enrichMeetingsWithArtifacts(
   meetings: MeetingSummary[],
   daysBack: number,
-  options?: { transcriptsDisabled?: boolean },
+  options?: { transcriptsDisabled?: boolean; range?: { start: Date; end: Date } },
 ): Promise<MeetingSummary[]> {
   if (meetings.length === 0) {
     return [];
   }
 
-  const endDate = new Date();
-  const startDate = new Date();
-  startDate.setDate(startDate.getDate() - daysBack);
+  const endDate = options?.range?.end ?? new Date();
+  const startDate = options?.range?.start ?? new Date(endDate);
+  if (!options?.range) {
+    startDate.setDate(startDate.getDate() - daysBack);
+  }
 
   const organizerIds = [...new Set(meetings.map((meeting) => meeting.organizerId))];
   const transcriptsByOrganizer = new Map<string, Map<string, TranscriptInfo[]>>();
@@ -1272,8 +1298,9 @@ export async function getRecentMeetingsWithTranscripts(
   userId: string,
   daysBack = 30,
   userDisplayName = userId,
+  dateKey?: string,
 ): Promise<MeetingListResult> {
-  const cacheKey = meetingListCacheKey(userId, daysBack);
+  const cacheKey = meetingListCacheKey(userId, dateKey ? 0 : daysBack, dateKey ?? "");
   const cached = getCachedMeetingList(cacheKey);
   if (cached) {
     return cached;
@@ -1289,6 +1316,7 @@ export async function getRecentMeetingsWithTranscripts(
     userId,
     daysBack,
     userDisplayName,
+    dateKey,
   );
   meetingListInflight.set(cacheKey, load);
   try {
@@ -1303,14 +1331,25 @@ async function loadRecentMeetingsWithTranscripts(
   userId: string,
   daysBack: number,
   userDisplayName: string,
+  dateKey?: string,
 ): Promise<MeetingListResult> {
-  const meetings = await getRecentMeetings(userId, daysBack, userDisplayName);
+  const range = dateKey ? ksaDayUtcRange(dateKey) : null;
+  if (dateKey && !range) {
+    throw new GraphError("Choose a valid date.", 400, "INVALID_DATE");
+  }
+  const meetings = await getRecentMeetings(
+    userId,
+    daysBack,
+    userDisplayName,
+    range ?? undefined,
+  );
 
   const withArtifacts = async (
     transcriptsDisabled: boolean,
   ): Promise<MeetingSummary[]> => {
     const annotated = await enrichMeetingsWithArtifacts(meetings, daysBack, {
       transcriptsDisabled,
+      range: range ?? undefined,
     });
     return dedupeMeetings(
       annotated.filter(
@@ -1340,6 +1379,138 @@ async function loadRecentMeetingsWithTranscripts(
     }
     throw error;
   }
+}
+
+async function transcriptIndexOrEmpty(
+  organizerId: string,
+  startDate: Date,
+  endDate: Date,
+): Promise<Map<string, TranscriptInfo[]>> {
+  try {
+    return await getOrganizerTranscriptIndex(organizerId, startDate, endDate);
+  } catch (error) {
+    if (error instanceof GraphError && error.code === "TRANSCRIPTS_DISABLED") {
+      transcriptsDisabledKnown = true;
+    }
+    return new Map();
+  }
+}
+
+/**
+ * Every recording whose organizer is a licensed user, for one KSA day.
+ * Application permissions let an admin see meetings they were not invited to.
+ */
+export async function getAllRecordedMeetingsOnDay(
+  dateKey: string,
+): Promise<MeetingListResult> {
+  const range = ksaDayUtcRange(dateKey);
+  if (!range) {
+    throw new GraphError("Choose a valid date.", 400, "INVALID_DATE");
+  }
+
+  const cacheKey = meetingListCacheKey(`all:${dateKey}`, 0, dateKey);
+  const cached = getCachedMeetingList(cacheKey);
+  if (cached) {
+    return cached;
+  }
+  const pending = meetingListInflight.get(cacheKey);
+  if (pending) {
+    return pending;
+  }
+
+  const load = loadAllRecordedMeetingsOnDay(cacheKey, dateKey, range);
+  meetingListInflight.set(cacheKey, load);
+  try {
+    return await load;
+  } finally {
+    meetingListInflight.delete(cacheKey);
+  }
+}
+
+async function loadAllRecordedMeetingsOnDay(
+  cacheKey: string,
+  dateKey: string,
+  range: { start: Date; end: Date },
+): Promise<MeetingListResult> {
+  const users = await listLicensedTenantUsers();
+  const names = new Map(users.map((user) => [user.id.toLowerCase(), user.displayName]));
+
+  interface RecordedGroup {
+    organizerId: string;
+    meetingId: string;
+    recordings: RecordingInfo[];
+    transcripts: TranscriptInfo[];
+  }
+  const groups = new Map<string, RecordedGroup>();
+
+  await mapWithConcurrency(users, 4, async (user) => {
+    const [recordings, transcripts] = await Promise.all([
+      getOrganizerRecordingIndex(user.id, range.start, range.end),
+      transcriptIndexOrEmpty(user.id, range.start, range.end),
+    ]);
+
+    const ensure = (meetingId: string): RecordedGroup => {
+      const key = `${user.id}|${meetingId}`;
+      const existing = groups.get(key);
+      if (existing) {
+        return existing;
+      }
+      const created: RecordedGroup = {
+        organizerId: user.id,
+        meetingId,
+        recordings: [],
+        transcripts: [],
+      };
+      groups.set(key, created);
+      return created;
+    };
+
+    for (const [meetingId, items] of recordings) {
+      const onDay = items.filter((item) => getKsaDateKey(item.createdDateTime) === dateKey);
+      if (onDay.length > 0) {
+        ensure(meetingId).recordings.push(...onDay);
+      }
+    }
+    for (const [meetingId, items] of transcripts) {
+      const onDay = items.filter((item) => getKsaDateKey(item.createdDateTime) === dateKey);
+      if (onDay.length > 0) {
+        ensure(meetingId).transcripts.push(...onDay);
+      }
+    }
+  });
+
+  const recorded = [...groups.values()].filter((group) => group.recordings.length > 0);
+  const meetings = await mapWithConcurrency(recorded, 5, async (group): Promise<MeetingSummary | null> => {
+    const details = await getOnlineMeetingDetails(group.organizerId, group.meetingId);
+    if (!details) {
+      return null;
+    }
+    const recording = latestArtifact(group.recordings);
+    const transcript = latestArtifact(group.transcripts);
+    const start = recording?.createdDateTime || transcript?.createdDateTime || "";
+    return {
+      eventId: `artifact:${group.meetingId}:${dateKey}`,
+      subject: details.subject,
+      start,
+      end: recording?.endDateTime || start,
+      joinUrl: details.joinUrl,
+      userId: group.organizerId,
+      userDisplayName:
+        names.get(group.organizerId.toLowerCase()) ?? "Organizer",
+      organizerId: group.organizerId,
+      onlineMeetingId: group.meetingId,
+      latestTranscriptId: transcript?.id,
+      hasTranscript: Boolean(transcript),
+      hasRecording: true,
+    };
+  });
+
+  return setCachedMeetingList(cacheKey, {
+    meetings: dedupeMeetings(
+      meetings.filter((meeting): meeting is MeetingSummary => meeting !== null),
+    ),
+    transcriptAccessDisabled: transcriptsDisabledKnown,
+  });
 }
 
 export async function getAllRecentMeetings(

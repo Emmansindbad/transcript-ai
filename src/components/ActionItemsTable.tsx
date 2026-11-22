@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { DEV_TAGS, normalizeDevTag } from "@/lib/dev-tags";
-import type { MeetingActionItem, TeamsAccountStatus } from "@/types/meeting";
+import type { MeetingActionItem, TeamsAccountStatus, TenantUser } from "@/types/meeting";
+import { assigneeFieldsForName } from "@/lib/assignees";
 import { fieldClass, labelClass, primaryButtonClass, secondaryButtonClass } from "@/components/ui-classes";
 
 interface ActionItemsTableProps {
@@ -23,6 +24,10 @@ interface ActionItemsTableProps {
   isSendingPmt: boolean;
   pmtSummary?: string | null;
   pmtLinks?: Array<{ number: number; url: string; created: boolean }>;
+  pmtActionLabel?: string;
+  pmtBusyLabel?: string;
+  pmtReady?: boolean;
+  directoryUsers?: TenantUser[];
 }
 
 function updateItem(
@@ -51,6 +56,10 @@ export function ActionItemsTable({
   isSendingPmt,
   pmtSummary,
   pmtLinks = [],
+  pmtActionLabel = "Create Ticket to PMT",
+  pmtBusyLabel = "Creating PMT tickets…",
+  pmtReady = true,
+  directoryUsers = [],
 }: ActionItemsTableProps): React.ReactNode {
   const [includeIris, setIncludeIris] = useState(false);
   const selectedCount = actionItems.filter((item) => item.include).length;
@@ -150,10 +159,10 @@ export function ActionItemsTable({
           <button
             type="button"
             onClick={onSendPmt}
-            disabled={isSendingPmt || selectedCount === 0}
+            disabled={isSendingPmt || selectedCount === 0 || !pmtReady}
             className={primaryButtonClass}
           >
-            {isSendingPmt ? "Creating PMT tickets…" : "Create Ticket to PMT"}
+            {isSendingPmt ? pmtBusyLabel : pmtActionLabel}
           </button>
           <button
             type="button"
@@ -187,6 +196,7 @@ export function ActionItemsTable({
                   className="h-4 w-4 accent-zinc-900"
                 />
                 Task #{index + 1} · {item.meetingTitle} · {item.meetingDate}
+                {item.lane === "sheets" ? " · Sheets" : ""}
               </label>
               {item.alreadyFiled ? (
                 <span className="text-[11px] text-amber-700">Already filed</span>
@@ -304,15 +314,20 @@ export function ActionItemsTable({
                 value={item.pointPerson}
                 onChange={(event) =>
                   onItemsChange(
-                    updateItem(actionItems, item.id, {
-                      pointPerson: event.target.value,
-                    }),
+                    updateItem(actionItems, item.id, assigneeFieldsForName(event.target.value, directoryUsers)),
                   )
                 }
                 className={fieldClass}
               />
               {item.assigneeUpn ? (
-                <p className="mt-1 text-xs text-zinc-400">{item.assigneeUpn}</p>
+                <p className="mt-1 text-xs text-zinc-400">
+                  {item.assigneeDisplayName
+                    ? `${item.assigneeDisplayName} · ${item.assigneeUpn}`
+                    : item.assigneeUpn}
+                </p>
+              ) : item.pointPerson.trim() &&
+                !/^(unassigned|tbd|none)$/i.test(item.pointPerson.trim()) ? (
+                <p className="mt-1 text-xs text-amber-800">No matching person for that name.</p>
               ) : null}
             </label>
 

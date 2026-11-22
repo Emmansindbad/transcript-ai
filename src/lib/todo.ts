@@ -2,6 +2,7 @@ import "server-only";
 
 import type { Client } from "@microsoft/microsoft-graph-client";
 import type { MeetingActionItem } from "@/types/meeting";
+import { retainCrucialSourceLinks } from "@/lib/chat-links";
 import { normalizeDevTag } from "@/lib/dev-tags";
 import { getTargetUserId } from "@/lib/env";
 import { GraphError } from "@/lib/errors";
@@ -68,7 +69,7 @@ function buildTaskBody(item: MeetingActionItem): string {
 
   return `<div style="font-family:Segoe UI,sans-serif;font-size:14px;line-height:1.5;color:#242424;">
   <p style="margin:0 0 12px;font-size:15px;font-weight:600;">${escapeHtml(item.title || item.task)}</p>
-  <p style="margin:0 0 12px;white-space:pre-wrap;">${escapeHtml(item.description || item.task)}</p>
+  <p style="margin:0 0 12px;white-space:pre-wrap;">${escapeHtml(retainCrucialSourceLinks(item.description || item.task))}</p>
   <table style="border-collapse:collapse;width:100%;">
     <tr>
       <td style="padding:6px 16px 6px 0;color:#616161;white-space:nowrap;vertical-align:top;">Type</td>

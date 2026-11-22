@@ -6,7 +6,7 @@ import path from "node:path";
 import type { Client } from "@microsoft/microsoft-graph-client";
 import type { CodeQcSendTicket, CodeQcTeamsResult } from "@/types/code-qc";
 import type { MeetingActionItem, TeamsSendResult, TenantUser } from "@/types/meeting";
-import { renderMarkdownLinksAsHtml } from "@/lib/chat-links";
+import { renderMarkdownLinksAsHtml, retainCrucialSourceLinks } from "@/lib/chat-links";
 import { CODE_QC_MORE_BATCH, VISIBLE_CODE_QC_TICKETS, displayBoardName } from "@/lib/code-qc-brief";
 import { matchAssignee } from "@/lib/assignees";
 import { normalizeDevTag } from "@/lib/dev-tags";
@@ -260,7 +260,7 @@ function buildAdaptiveCard(items: MeetingActionItem[], assigneeName: string): st
         spacing: "Small",
       },
     ];
-    const description = clipText(item.description, 1200);
+    const description = clipText(retainCrucialSourceLinks(item.description), 1200);
     if (description) {
       blocks.push({
         type: "TextBlock",
@@ -328,7 +328,7 @@ function buildChatHtml(items: MeetingActionItem[], assigneeName: string): string
           `<li><strong>${escapeHtml(fact.title)}</strong> — ${escapeHtml(fact.value)}</li>`,
       )
       .join("");
-    const description = clipText(item.description, 2000);
+    const description = clipText(retainCrucialSourceLinks(item.description), 2000);
     const detail = description ? `<p>${renderMarkdownLinksAsHtml(description)}</p>` : "";
     const title = escapeHtml(ticketTitle(item));
     const heading = item.pmtUrl?.trim()

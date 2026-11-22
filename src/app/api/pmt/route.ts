@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { MeetingActionItem } from "@/types/meeting";
 import { isLocalRequest } from "@/lib/local-control";
+import { meetingPmtViewerEmail } from "@/lib/pmt-analytics";
 import { createPmtTickets } from "@/lib/pmt";
 import {
   getErrorCode,
@@ -12,6 +13,8 @@ export const dynamic = "force-dynamic";
 
 interface PmtRequestBody {
   actionItems?: MeetingActionItem[];
+  destinationId?: number;
+  destinationName?: string;
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
@@ -45,7 +48,21 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       );
     }
 
-    const result = await createPmtTickets(included);
+    const destinationId = body.destinationId;
+    const destinationName = body.destinationName?.trim() ?? "";
+    if (!Number.isInteger(destinationId) || !destinationId || destinationId <= 0 || !destinationName) {
+      return NextResponse.json(
+        { error: "Choose the board or sheet for these tickets.", code: "PMT_DESTINATION" },
+        { status: 400 },
+      );
+    }
+
+    const viewerEmail = await meetingPmtViewerEmail();
+    const result = await createPmtTickets(
+      included,
+      { id: destinationId, name: destinationName },
+      viewerEmail,
+    );
     return NextResponse.json(result);
   } catch (error) {
     return NextResponse.json(

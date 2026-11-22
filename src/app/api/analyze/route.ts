@@ -17,8 +17,8 @@ import {
 } from "@/lib/errors";
 import { listFiledKeys, saveAnalysis } from "@/lib/store";
 import { toMeetingActionItems } from "@/lib/filing";
-import { buildMeetingKey } from "@/lib/meeting-key";
-import type { MeetingSummary } from "@/types/meeting";
+import { buildWorkspaceMeetingKey } from "@/lib/ticket-lane";
+import type { MeetingSummary, TicketLane } from "@/types/meeting";
 
 export const maxDuration = 300;
 
@@ -34,6 +34,11 @@ interface AnalyzeRequestBody {
   organizerId?: string;
   onlineMeetingId?: string;
   meeting?: MeetingSummary;
+  lane?: TicketLane;
+}
+
+function requestLane(lane: TicketLane | undefined): TicketLane {
+  return lane === "sheets" ? "sheets" : "development";
 }
 
 function encodeSse(event: Record<string, unknown>): Uint8Array {
@@ -49,6 +54,7 @@ async function resolveMeetingSource(
     meetingDate: body.meetingDate?.trim() || undefined,
     artifactDateLabel: body.artifactDateLabel?.trim() || undefined,
     artifactSource: body.artifactSource?.trim() || undefined,
+    lane: requestLane(body.lane),
   };
 }
 
@@ -142,15 +148,16 @@ export async function POST(request: NextRequest): Promise<Response> {
         send({ type: "status", message: "Matching assignees and saving…" });
 
         const users = await listTenantUsers();
+        const lane = requestLane(body.lane);
         const parsedItems = applyAssigneeMatches(result.actionItems, users);
         const filedKeys = meeting ? await listFiledKeys() : new Set<string>();
         const actionItems = meeting
-          ? toMeetingActionItems(meeting, parsedItems, filedKeys)
+          ? toMeetingActionItems(meeting, parsedItems, filedKeys, lane)
           : [];
 
         if (meeting) {
           await saveAnalysis({
-            meetingKey: buildMeetingKey(meeting),
+            meetingKey: buildWorkspaceMeetingKey(meeting, lane),
             analysis: result.analysis,
             actionItems,
             modelUsed: result.modelUsed,

@@ -1,8 +1,16 @@
 import "server-only";
 
-import type { MeetingActionItem, PmtCreateResult, PmtTicketResult, TenantUser } from "@/types/meeting";
+import type {
+  MeetingActionItem,
+  PmtBoardOption,
+  PmtCreateResult,
+  PmtTicketResult,
+  TenantUser,
+  TicketLane,
+} from "@/types/meeting";
 import { resolveDirectoryAssignee } from "@/lib/assignees";
-import { rewriteTeamsPermalinks } from "@/lib/chat-links";
+import { retainCrucialSourceLinks } from "@/lib/chat-links";
+import { ticketLaneOf } from "@/lib/ticket-lane";
 import { normalizeDevTag } from "@/lib/dev-tags";
 import { getPmtApiToken, getPmtBaseUrl } from "@/lib/env";
 import { AppError } from "@/lib/errors";
@@ -112,7 +120,11 @@ export function assertPmtLinks(actionItems: MeetingActionItem[]): void {
   );
 }
 
-function toPmtItem(item: MeetingActionItem, users: TenantUser[]): PmtTicketRequest {
+function toPmtItem(
+  item: MeetingActionItem,
+  users: TenantUser[],
+  lane: TicketLane,
+): PmtTicketRequest {
   const name = clip(item.title || item.task || "Untitled ticket", 255);
   const request: PmtTicketRequest = {
     externalKey: item.filingKey,
@@ -120,7 +132,7 @@ function toPmtItem(item: MeetingActionItem, users: TenantUser[]): PmtTicketReque
     itemType: item.type === "Bug" ? "bug" : "task",
     priority: pmtPriority(item.priority),
   };
-  const description = clip(rewriteTeamsPermalinks(item.description), 10000);
+  const description = clip(retainCrucialSourceLinks(item.description), 10000);
   const email = assigneeEmail(item, users);
   const dueAt = dueDate(item.deadline);
   const devTag = normalizeDevTag(item.devTag);
@@ -134,11 +146,33 @@ function toPmtItem(item: MeetingActionItem, users: TenantUser[]): PmtTicketReque
   if (dueAt) {
     request.dueAt = dueAt;
   }
-  if (devTag) {
+  if (lane === "development" && devTag) {
     request.devTag = devTag;
   }
-  request.relatedTo = relatedTo;
+  if (lane === "development" || relatedTo !== "None") {
+    request.relatedTo = relatedTo;
+  }
   return request;
+}
+
+function toSheetItem(item: PmtTicketRequest): {
+  externalKey: string;
+  name: string;
+  priority: "low" | "medium" | "high";
+  description?: string;
+  assigneeEmail?: string;
+  dueAt?: string;
+  relatedTo?: string;
+} {
+  return {
+    externalKey: item.externalKey,
+    name: item.name,
+    priority: item.priority,
+    ...(item.description ? { description: item.description } : {}),
+    ...(item.assigneeEmail ? { assigneeEmail: item.assigneeEmail } : {}),
+    ...(item.dueAt ? { dueAt: item.dueAt } : {}),
+    ...(item.relatedTo ? { relatedTo: item.relatedTo } : {}),
+  };
 }
 
 function pmtErrorMessage(status: number, body: unknown): string {
@@ -170,17 +204,18 @@ function pmtErrorMessage(status: number, body: unknown): string {
   return message || `PMT rejected the tickets (${status}).`;
 }
 
-function resultMessage(boardName: string, items: PmtTicketResult[]): string {
+function resultMessage(
+  boardName: string,
+  items: PmtTicketResult[],
+  noun: "ticket" | "row" = "ticket",
+): string {
   const created = items.filter((item) => item.created).length;
   const filled = items.filter((item) => !item.created && (item.filled?.length ?? 0) > 0).length;
   const unchanged = items.length - created - filled;
   const parts: string[] = [];
   if (created > 0) {
-    parts.push(
-      created === 1
-        ? `Created 1 ticket on ${boardName}`
-        : `Created ${created} tickets on ${boardName}`,
-    );
+    const label = created === 1 ? noun : `${noun}s`;
+    parts.push(`Created ${created} ${label} on ${boardName}`);
   }
   if (filled > 0) {
     parts.push(
@@ -199,6 +234,7 @@ async function postPmtTickets(
   boardName: string,
   meetingDate: string | null,
   items: PmtTicketRequest[],
+  access?: { boardId: number; email: string },
 ): Promise<{ board: { id: number; name: string }; items: PmtTicketResult[] }> {
   let token: string;
   try {
@@ -220,6 +256,7 @@ async function postPmtTickets(
     },
     body: JSON.stringify({
       boardName,
+      ...(access ? { boardId: access.boardId, email: access.email } : {}),
       meetingDate,
       items,
     }),
@@ -236,11 +273,18 @@ async function postPmtTickets(
     );
   }
 
-  if (!isRecord(body) || !isRecord(body.board) || !Array.isArray(body.items)) {
+  const destination = isRecord(body)
+    ? isRecord(body.sheet)
+      ? body.sheet
+      : isRecord(body.board)
+        ? body.board
+        : null
+    : null;
+  if (!isRecord(body) || !destination || !Array.isArray(body.items)) {
     throw new AppError("PMT returned an unexpected response.", 502, "PMT_CREATE_FAILED");
   }
-  const boardId = body.board.id;
-  const name = body.board.name;
+  const boardId = destination.id;
+  const name = destination.name;
   if (typeof boardId !== "number" || typeof name !== "string") {
     throw new AppError("PMT returned an unexpected response.", 502, "PMT_CREATE_FAILED");
   }
@@ -332,22 +376,113 @@ export async function createPmtTicketsOnBoard(
   };
 }
 
+async function postSheetRows(
+  sheetId: number,
+  viewerEmail: string,
+  meetingDate: string | null,
+  items: PmtTicketRequest[],
+): Promise<{ board: { id: number; name: string }; items: PmtTicketResult[] }> {
+  let token: string;
+  try {
+    token = getPmtApiToken();
+  } catch {
+    throw new AppError(
+      "PMT is not configured on this PC. Add PMT_API_TOKEN and restart the analyzer.",
+      500,
+      "PMT_NOT_CONFIGURED",
+    );
+  }
+
+  const response = await fetch(`${getPmtBaseUrl()}/api/integrations/sheets`, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      email: viewerEmail,
+      sheetId,
+      meetingDate,
+      items: items.map(toSheetItem),
+    }),
+  });
+
+  const body: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    const message = pmtErrorMessage(response.status, body);
+    const routeMissing = !isRecord(body) || /could not be found/i.test(message);
+    if (response.status === 404 && routeMissing) {
+      throw new AppError(
+        "PMT cannot create sheet rows yet. Deploy the sheets integration, then try again.",
+        502,
+        "PMT_SHEETS_UNAVAILABLE",
+      );
+    }
+    throw new AppError(
+      message,
+      response.status === 403 || response.status === 404 || response.status === 422
+        ? response.status
+        : 502,
+      response.status === 401 ? "PMT_UNAUTHORIZED" : "PMT_CREATE_FAILED",
+    );
+  }
+
+  const destination = isRecord(body) && isRecord(body.sheet) ? body.sheet : null;
+  if (!isRecord(body) || !destination || !Array.isArray(body.items)) {
+    throw new AppError("PMT returned an unexpected response.", 502, "PMT_CREATE_FAILED");
+  }
+  const id = destination.id;
+  const name = destination.name;
+  if (typeof id !== "number" || typeof name !== "string") {
+    throw new AppError("PMT returned an unexpected response.", 502, "PMT_CREATE_FAILED");
+  }
+  const tickets = body.items.filter(isPmtTicket);
+  if (tickets.length === 0) {
+    throw new AppError("PMT returned an unexpected response.", 502, "PMT_CREATE_FAILED");
+  }
+  return { board: { id, name }, items: tickets };
+}
+
 export async function createPmtTickets(
   actionItems: MeetingActionItem[],
+  destination: PmtBoardOption,
+  viewerEmail: string,
 ): Promise<PmtCreateResult> {
   if (actionItems.length === 0) {
     throw new AppError("Select at least one action item to send.", 400, "NO_ACTION_ITEMS");
   }
 
-  const boardName = actionItems[0]?.meetingTitle.trim() ?? "";
-  if (!boardName) {
+  const lanes = new Set(actionItems.map((item) => ticketLaneOf(item)));
+  if (lanes.size > 1) {
     throw new AppError(
-      "This meeting has no title, so PMT cannot find a board.",
+      "Selected tickets mix development and Sheets. Create them separately.",
       400,
-      "PMT_BOARD_NAME",
+      "PMT_MIXED_LANES",
     );
   }
-  if (actionItems.some((item) => item.meetingTitle.trim() !== boardName)) {
+  const lane = ticketLaneOf(actionItems[0] ?? {});
+  const destinationName = destination.name.replace(/[\u200B-\u200D\uFEFF]/g, "").trim();
+  if (!Number.isInteger(destination.id) || destination.id <= 0 || !destinationName) {
+    throw new AppError(
+      lane === "sheets" ? "Choose a sheet." : "Choose a board.",
+      400,
+      "PMT_DESTINATION",
+    );
+  }
+  const mailbox = viewerEmail.trim();
+  if (!mailbox.includes("@")) {
+    throw new AppError(
+      "Sign in to Teams so PMT can check which boards and sheets you can use.",
+      401,
+      "TEAMS_SIGN_IN",
+    );
+  }
+  const meetingTitle = actionItems[0]?.meetingTitle.trim() ?? "";
+  if (
+    lane === "development" &&
+    actionItems.some((item) => item.meetingTitle.trim() !== meetingTitle)
+  ) {
     throw new AppError(
       "Selected tickets come from more than one meeting. Create them one meeting at a time.",
       400,
@@ -393,11 +528,15 @@ export async function createPmtTickets(
       };
     });
 
-  const posted = await postPmtTickets(
-    boardName,
-    actionItems[0]?.meetingDate ?? null,
-    items.map((item) => toPmtItem(item, directory)),
-  );
+  const requests = items.map((item) => toPmtItem(item, directory, lane));
+  const meetingDate = actionItems[0]?.meetingDate ?? null;
+  const posted =
+    lane === "sheets"
+      ? await postSheetRows(destination.id, mailbox, meetingDate, requests)
+      : await postPmtTickets(destinationName, meetingDate, requests, {
+          boardId: destination.id,
+          email: mailbox,
+        });
   const tickets = posted.items;
   const boardId = posted.board.id;
   const name = posted.board.name;
@@ -421,13 +560,16 @@ export async function createPmtTickets(
     return {
       ...withAssignee,
       assigneeMatched: false,
-      warning: `No Microsoft 365 user matched ${person}, so the PMT ticket was created unassigned.`,
+      warning:
+        lane === "sheets"
+          ? `No Microsoft 365 user matched ${person}, so the sheet row was left unassigned.`
+          : `No Microsoft 365 user matched ${person}, so the PMT ticket was created unassigned.`,
     };
   });
 
   return {
     board: { id: boardId, name },
     items: withWarnings,
-    message: resultMessage(name, withWarnings),
+    message: resultMessage(name, withWarnings, lane === "sheets" ? "row" : "ticket"),
   };
 }
